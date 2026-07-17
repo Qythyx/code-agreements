@@ -52,6 +52,26 @@ documentation. Don't restate what the next line does — clear names and structu
 A comment explaining what was removed, what this replaces, or what is no longer needed is written for
 the reviewer, not the next reader. It's noise the moment the change merges.
 
+### Keep rationale in the commit, not the comment
+
+Why an approach was chosen over an alternative, or how a dependency's internals force the current
+shape, is not "what the code can't say" — it's context for whoever reviews the change. It outlives
+the context that justified it and rots in place, and it drags in names of things the code no longer
+references. State the local intent the line can't; put the "why not the other way" in the commit or
+PR.
+
+```js
+// Before — names the rejected alternative and walks the dependency's internals
+// ...preserving config that `nbgv set-version` would strip. Then stage it ourselves:
+// @semantic-release/git runs from this cwd and builds its list with `git ls-files`,
+// which never reaches ../../version.json...
+prepareCmd: 'node scripts/bump-version-json.mjs ${v} && git add ../../version.json',
+
+// After — only the coupling this line can't show on its own
+// Bump version.json (repo root) and stage it for the release commit below.
+prepareCmd: 'node scripts/bump-version-json.mjs ${v} && git add ../../version.json',
+```
+
 ## Warnings
 
 ### Never silence a warning to make it go away
@@ -115,6 +135,20 @@ layer down, the guard is not worth its weight.
 
 If nothing else re-creates a deleted database item, a special case for one resource type is
 inconsistent, not careful. Consistency with the surrounding code is itself an argument.
+
+### Prefer removing a hazard to documenting it
+
+When a trap exists only because something is inconsistent, fix the inconsistency instead of writing
+the warning. A documented hazard still catches people, and the document rots independently of the
+thing it describes.
+
+```
+Four test projects, three different AssemblyName patterns; two resolved
+differently in Debug and Release.
+
+Documenting it:  "watch out — the assembly name changes per configuration"
+Removing it:     delete the overrides; all four resolve to the project name
+```
 
 ### Prefer one general rule over several specific ones
 
