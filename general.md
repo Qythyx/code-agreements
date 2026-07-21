@@ -15,6 +15,23 @@ when there's a measured reason to.
 A fact should be stated in one place. Duplication is a maintenance liability before it's anything
 else, because the copies drift.
 
+### Centralise a repeated correctness check behind one named guard
+
+Duplicating a check is worse than duplicating a fact: every hand-written copy is a fresh chance to
+invert the comparison, forget the throw, or pick the wrong status code. Where the check enforces a
+security invariant, a bad copy is a vulnerability rather than drift.
+
+```csharp
+// Before: written out at seven call sites
+if (await ResolveAccountID(credentials) != credentials.AccountID)
+{
+    throw new DatabaseException(HttpStatusCode.Forbidden, "Invalid credentials for the requested account");
+}
+
+// After
+await AssertCredentials(credentials);
+```
+
 ### Avoid variables that are used only once
 
 Inline the expression unless naming it genuinely aids reading or improves the formatting.
@@ -28,6 +45,36 @@ the UX is genuinely unique — otherwise every page becomes its own small design
 
 Two literals that are the same value are one constant waiting to be extracted. Define the constant
 and use it.
+
+### Keep only genuinely-mutable values in component state
+
+State is for what changes in response to interaction. A value set once when the component mounts, or
+derived from data the component already holds, is not state — compute it at render time (inlined if
+it's used once). Storing it lets the copy drift from its source and pads the state object with
+fields that never move.
+
+## Naming
+
+### Name a lookup for what it returns, not for what a caller might check
+
+A lookup called `Verify*` reads as though it enforces something, so a caller may use it as a guard
+and forget the comparison it was supposed to make. Name it for the value it produces, and let a
+separate `Assert*` do the enforcing.
+
+```csharp
+VerifyCredentials  ->  ResolveAccountID   // returns an account ID, or null
+                       AssertCredentials  // throws when the caller doesn't own the account
+```
+
+### Name a wire type for its role in the exchange
+
+`Request` and `Response` say which direction a type travels and what it's for. `Message` says only
+that it crosses the wire, which every one of them does.
+
+```csharp
+SetOfferQuantityMessage   ->  SetOfferQuantityRequest
+CardSetupSessionResponse  ->  CreateCardSetupSessionResponse
+```
 
 ## Style
 
@@ -49,8 +96,8 @@ documentation. Don't restate what the next line does — clear names and structu
 
 ### Don't comment on what used to be there
 
-A comment explaining what was removed, what this replaces, or what is no longer needed is written for
-the reviewer, not the next reader. It's noise the moment the change merges.
+A comment explaining what was removed, what this replaces, or what is no longer needed is written
+for the reviewer, not the next reader. It's noise the moment the change merges.
 
 ### Keep rationale in the commit, not the comment
 
@@ -112,6 +159,20 @@ value from a known set instead, and make the string-taking version private.
 
 Not in the caller, and not in a satellite helper.
 
+```csharp
+// Before: a satellite helper formats the payment method
+public static class CardDisplay
+{
+    public static string? ForCard(RegisteredPaymentMethod pm) => ...;
+}
+
+// After: the type that holds the data formats itself
+public record StripeAccountInfo(string CustomerID, string? Brand, string? Last4)
+{
+    public string Describe() => ...;
+}
+```
+
 ### Don't expose an identifier every caller converts anyway
 
 If each call site converts the identifier to the thing on the same line, the identifier is ceremony.
@@ -130,6 +191,13 @@ public static string WelcomeEmail => Read("WelcomeEmail.html");
 
 Not a theoretical one. If the failure it guards is narrow, self-correcting, or already handled a
 layer down, the guard is not worth its weight.
+
+### Don't issue a write that only re-asserts state the server already holds
+
+When the server has already applied a change out of band, read the updated state back rather than
+sending an update that sets it to what it already is. The redundant write is a wasted round trip and
+a second chance to fail. (After the card-setup return switched the account server-side, the app was
+calling UpdateAccount to set the same thing; a refresh replaced it.)
 
 ### Don't defend against a failure the codebase ignores elsewhere
 

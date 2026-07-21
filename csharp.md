@@ -13,6 +13,30 @@ Group the related model, service, and viewmodel together rather than filing each
 
 ### Favour composition over inheritance
 
+### Nest a type that serves only as one interface's contract inside that interface
+
+A result or DTO used only as the input or output of a single interface belongs nested inside it —
+not in a sibling file, not at namespace scope. A type used only by one class nests privately inside
+that class the same way. It scopes the name to what it serves and keeps the folder from filling with
+one-line files.
+
+Nesting a public type _signals_ the coupling but doesn't _enforce_ it: it's still constructible as
+`IFoo.Bar`, and `internal` isn't an option when the implementation lives in a different assembly.
+Call sites reference it as `IFoo.Bar`, or alias it per file (`using Bar = …IFoo.Bar;`) where that
+reads noisily.
+
+```csharp
+// Before: ChargeResult.cs, CardSetupSession.cs — each a one-line sibling of IPaymentService
+public record ChargeResult(PaymentMethodStatus Status, string? PaymentIntentID, string? DeclineCode);
+
+// After: nested in the interface whose methods return it
+public interface IPaymentService
+{
+    Task<ChargeResult> ChargeCustomerAsync(...);
+    record ChargeResult(PaymentMethodStatus Status, string? PaymentIntentID, string? DeclineCode);
+}
+```
+
 ## Naming
 
 ### Don't prefix a type with `Defined`
@@ -45,6 +69,18 @@ silently breaks callers of a `Templates` class imported from elsewhere. Check fo
 name before naming a namespace.
 
 ## Style
+
+### Omit redundant access modifiers on interface members
+
+Interface members — including nested types — are public by default; don't spell out `public`.
+
+```csharp
+public interface IAccountManager
+{
+    // not: public sealed record AccountLookupResult(...)
+    sealed record AccountLookupResult(AccountLookupStatus Status, Account? Account);
+}
+```
 
 ### Use PascalCase for public members, camelCase for private fields
 
@@ -124,6 +160,17 @@ cover the forgotten-member case with a test that iterates `Enum.GetValues<T>()`.
 Pass `nameof(x)`; passing the value reports `(Parameter 'OrderClosing')`.
 
 ## Strings
+
+### Don't spell out `StringComparison` to compare two strings for equality
+
+`==` and `!=` on two `string`s already compare ordinally and handle null, so the explicit form is
+longer without behaving differently. On a security-critical line the smaller diff is worth more,
+because it's the one a reviewer has to read.
+
+```csharp
+!string.Equals(a, b, StringComparison.Ordinal)   // same result
+a != b                                            // prefer
+```
 
 ### Derive a string from the semantically correct source
 
