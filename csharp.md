@@ -134,6 +134,28 @@ Task<T> ExecuteStoredProcedure<T>(StoredProcedure storedProcedure, dynamic[] par
 Database.ExecuteStoredProcedure<Customer>(StoredProcedure.CreateOrUpdateCustomer, [...]);
 ```
 
+### Validate a record's positional property in the initializer, not an init accessor
+
+Redeclare the property with a validating initializer expression. A property initializer assigns the
+backing field directly and does **not** run a custom `init` accessor, so validation placed in the
+accessor is silently skipped on exactly the paths that matter — the primary constructor, and
+System.Text.Json deserialization, which constructs records through it. The accessor would only fire
+for an external `with { … }`. Because `ArgumentOutOfRangeException.ThrowIf*` returns `void`, it
+can't be the initializer expression directly; use a ternary, or a static helper the initializer
+calls.
+
+```csharp
+// Runs on every path, including deserialization
+public record SetOfferQuantityMessage(string AccountID, string OfferID, int Quantity) : IMessage
+{
+    public int Quantity { get; init; } =
+        Quantity >= 0 ? Quantity : throw new ArgumentOutOfRangeException(nameof(Quantity), "Quantity cannot be negative");
+}
+
+// Trap: the `= Quantity` initializer bypasses this accessor, so the guard never runs on construct/deserialize
+public int Quantity { get; init { ArgumentOutOfRangeException.ThrowIfNegative(value); field = value; } } = Quantity;
+```
+
 ## Enums and switch expressions
 
 ### Declare explicit enum values
@@ -206,6 +228,17 @@ Return `Task` or `Task<T>`; don't block on async code.
 ### Avoid `async void` except for event handlers
 
 ### Use `ConfigureAwait(false)` in library code that isn't UI-bound
+
+## Tests
+
+### Pass caller-info arguments explicitly in mock arrangements
+
+`[CallerMemberName]` is filled in at each call site with the name of the member containing the call.
+In a JustMock arrangement lambda, that member is the _test method_, and the compiler bakes its name
+into the expression tree as a constant that JustMock matches exactly. An arrangement that omits the
+argument therefore only matches when the test method happens to share the production caller's name —
+and fails mysteriously when it doesn't. Pass the argument explicitly: `nameof(TheManager.TheMethod)`
+to assert the value, or `Arg.AnyString` to ignore it.
 
 ## Documentation
 

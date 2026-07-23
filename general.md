@@ -55,6 +55,18 @@ fields that never move.
 
 ## Naming
 
+### Name an identifier parameter for what it identifies
+
+A bare `id` forces the reader to infer whose id it is, and the enclosing method name is not enough
+to disambiguate — a method touching two entities leaves it an open question which one the id
+references. Say it in the name.
+
+```csharp
+// `id` could plausibly be the order's or the payment's
+Task<OrderViewWithAccount> ReconcileOrderPaymentAsync(string id)       ->
+Task<OrderViewWithAccount> ReconcileOrderPaymentAsync(string orderID)
+```
+
 ### Name a lookup for what it returns, not for what a caller might check
 
 A lookup called `Verify*` reads as though it enforces something, so a caller may use it as a guard
@@ -93,6 +105,42 @@ Handle the exit case and get out, rather than nesting the main path inside a con
 
 Comment when the code is genuinely tricky or unintuitive, or when the codebase requires
 documentation. Don't restate what the next line does — clear names and structure do that job better.
+A self-evident guard needs no comment above it: an `if` whose condition and thrown message already
+say what's being rejected explains itself, and narrating the consequence of _not_ guarding is
+rationale that belongs in the commit, not the code (see "Keep rationale in the commit").
+
+```csharp
+// Before — a paragraph explaining a guard that already speaks for itself
+// A negative quantity would survive the clamp below (it is the minimum), inflating stock
+// via a positive beverage delta and storing a negative order entry. Reject it outright.
+if (quantity < 0)
+{
+    throw new DatabaseException(HttpStatusCode.BadRequest, "Quantity cannot be negative");
+}
+
+// After — the condition and message are the whole story
+if (quantity < 0)
+{
+    throw new DatabaseException(HttpStatusCode.BadRequest, "Quantity cannot be negative");
+}
+```
+
+### A comment's stated reason must be a scenario that can actually occur
+
+Before writing (or keeping) a comment that justifies code with a scenario, check the scenario is
+reachable in this system. A plausible-but-false reason is worse than none: it survives review and
+sends the next reader investigating the wrong thing. If no reachable scenario can be named, question
+the code instead of the comment.
+
+```csharp
+// Before — "legacy customers" cannot exist in a service that hasn't launched
+// ...falling back to the most recently added card if no default is set (legacy customers).
+
+// After — the cause that can actually happen
+// ...falling back to the most recently added card if no default is set — possible when card setup
+// succeeded on Stripe's side (card attached) but the completion handler that records the default
+// never ran, e.g. the customer closed the browser before returning to the success URL.
+```
 
 ### Don't comment on what used to be there
 
@@ -226,6 +274,16 @@ A rule per instance is a list someone has to maintain, and lists rot.
 <!-- Instead of one entry per file, or one per folder -->
 <EmbeddedResource Include="Resources/*/*" />
 ```
+
+## Tests
+
+### A test asserts its marginal behavior, not a copy of another test's expectations
+
+When a second test exists only to pin one additional behavior (an error propagates, a status passes
+through), match the collaborator loosely and assert just that behavior. Duplicating another test's
+exact-match setup adds a second copy that must be edited in lockstep while verifying nothing the
+first test doesn't already cover — and a test whose only marginal assertion is default behavior
+(e.g. an exception propagating through code with no try/catch) may not be worth keeping at all.
 
 ## Evidence
 
