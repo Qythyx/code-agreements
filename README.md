@@ -11,6 +11,14 @@ development sessions — usually when I correct, simplify, or rename something.
 Each entry records what was actually settled, with the reasoning attached, so a future session can
 read it and skip the argument. It is not a style guide written from first principles.
 
+## What to read
+
+Always read `general.md`. It applies to every language, and it holds the design, comment, and process
+guidance that is easiest to assume you already know.
+
+Then read the file for **every** language the change touches — plural, not one. A change spanning a
+C# backend and a TypeScript front end needs `csharp.md` and `typescript-react.md` both.
+
 ## Layout
 
 | File                  | Holds                                         |
