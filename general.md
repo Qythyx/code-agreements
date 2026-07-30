@@ -21,9 +21,9 @@ A client deserializing a whole response throws the entire payload away on an enu
 recognise, so adding a member becomes a breaking change for every already-shipped client. Read an
 unknown value as a designated neutral fallback member instead of throwing, and degrade that one
 field. Make the tolerance opt-in per enum — a value should never be silently mislabelled without a
-deliberate choice — so an enum that only travels toward a peer that's always current (or is untrusted
-input you want to reject) stays strict. The fallback has to ship in the client's _first_ release; it
-can't be added retroactively to a build already in someone's hands.
+deliberate choice — so an enum that only travels toward a peer that's always current (or is
+untrusted input you want to reject) stays strict. The fallback has to ship in the client's _first_
+release; it can't be added retroactively to a build already in someone's hands.
 
 ### Centralise a repeated correctness check behind one named guard
 
@@ -80,7 +80,8 @@ separately and will raise its own notification — so a user-visible response fi
 rather than once per event. Collapse it at the point that owns the state, and re-arm the latch when
 the state can recur, or the second occurrence is swallowed forever.
 
-Guards checked before a request is issued do not help here: everything already in flight passed them.
+Guards checked before a request is issued do not help here: everything already in flight passed
+them.
 
 ```csharp
 // Fires once per session, not once per rejected request
@@ -91,9 +92,9 @@ if (Interlocked.Exchange(ref _sessionEvictionHandled, 1) == 1) { return; }
 ### A caller-side guard only suppresses the effects the caller owns
 
 When a shared layer produces effects of its own — an error banner, a spinner, a log line — before it
-hands control to the caller's handler, a check inside that handler cannot undo them. Moving the guard
-into the shared layer is then not just less duplication; it is the only placement that reaches every
-effect. Count the effects, not the call sites, when deciding where the guard goes.
+hands control to the caller's handler, a check inside that handler cannot undo them. Moving the
+guard into the shared layer is then not just less duplication; it is the only placement that reaches
+every effect. Count the effects, not the call sites, when deciding where the guard goes.
 
 ```tsx
 // Before: each page dropped a superseded response inside its own success handler — but the shared
@@ -134,9 +135,11 @@ non-nullable string with `""` as "no value". Nullability infects every consumer 
 queries, optional types in generated contracts, `?? ''` mapping in forms) while buying nothing.
 (Settled on Beverage.SKU/SupplierID, matching the existing ImageUrl convention.)
 
-### Avoid variables that are used only once
+### Avoid variables and helpers that are used only once
 
-Inline the expression unless naming it genuinely aids reading or improves the formatting.
+Inline the expression unless naming it genuinely aids reading or improves the formatting. This
+covers small helper functions too: a one-call-site helper whose "why" is already carried by a
+comment at the call site is pure indirection.
 
 ### Reuse common UX components rather than styling each page
 
@@ -166,18 +169,18 @@ render at once, they drift apart, and a reader has to hold two things where one 
 /* Before: the failing edge owned the outline, so the neutral edge arrived as a box-shadow —
    and a failing box drew both, one just outside the other */
 .node {
-  box-shadow: 0 0 0 calc(1px * var(--inv)) rgba(255, 255, 255, 0.16);
+	box-shadow: 0 0 0 calc(1px * var(--inv)) rgba(255, 255, 255, 0.16);
 }
 .node.has-fail {
-  outline: calc(2px * var(--inv)) solid var(--fail);
+	outline: calc(2px * var(--inv)) solid var(--fail);
 }
 
 /* After: one outline, recoloured per state */
 .node {
-  outline: calc(1px * var(--inv)) solid rgba(255, 255, 255, 0.16);
+	outline: calc(1px * var(--inv)) solid rgba(255, 255, 255, 0.16);
 }
 .node.has-fail {
-  outline: calc(2px * var(--inv)) solid var(--fail);
+	outline: calc(2px * var(--inv)) solid var(--fail);
 }
 ```
 
@@ -216,54 +219,20 @@ something the user can edit: change the email and every event from before the ch
 from every event after it. Use the account's own ID, which is opaque, not personal data, and doesn't
 move when the profile does.
 
-### Track an anonymous ID and a signed-in ID separately, and don't put the second in the first's field
-
-The account ID only exists after login, so a design with one identity field has nothing to say about
-everyone who hasn't signed in yet — and a shared placeholder is worse than nothing, because it merges
-every signed-out user into a single phantom. Carry two: a random per-install ID generated once and
-persisted, which is what the anonymous field is for, and the account ID in whatever field the backend
-reserves for an authenticated identity. The install ID spans login and logout, so a user's pre-login
-activity stays joined to what they do afterwards.
-
-Check which field is which before assuming. Application Insights documents `user_Id` as the anonymous
-ID and derives its sampling score from it — so a value that isn't random-ish skews sampling — and
-says outright that identifying a signed-in user there is a misuse of the field; `user_AuthenticatedId`
-is the one for that.
-
-```csharp
-// Before: the account ID in the anonymous field, and nothing at all before login
-client.Context.User.Id = accountID;
-
-// After
-client.Context.User.Id = installID; // random GUID, persisted, survives logout
-client.Context.User.AuthenticatedUserId = accountID; // null when signed out
-```
-
-### Measure "how long was the user away" with the wall clock, not a monotonic counter
-
-A monotonic counter is the reflex for elapsed time because it can't be moved by a clock change — but
-outside Windows it stops while the device is in a low-power state, and a backgrounded mobile app with
-a locked phone is exactly that. An overnight absence then reads as minutes, and every gate built on it
-silently never fires. `Environment.TickCount64` says so in its own docs: "The elapsed time excludes
-any non-awake time, such as time spent in sleep mode, hibernation mode, or other low-power states."
-The clock-change objection costs nothing here — a skewed clock produces one wrong session boundary,
-where the counter produces a permanently wrong answer. Keep the counter for short in-process waits
-where the device is awake throughout, such as a polling deadline.
-
-```csharp
-// Before: never trips after the phone sleeps
-if (Environment.TickCount64 - _backgroundedAtTicks >= SessionTimeout.TotalMilliseconds)
-
-// After
-if (DateTimeOffset.UtcNow - _backgroundedAt >= SessionTimeout)
-```
-
 ### Put an expensive or irreversible action behind a deliberate second keystroke
 
 A single key that spends minutes of machine time, or that can't be undone, will eventually be hit by
 accident. A two-key chord costs the deliberate user almost nothing and makes the accident
 impossible. (Re-running a UI-test journey moved from `r` to `r` followed by `r`/`a`/`f` for its
 scope.)
+
+### Refetch after a mutation when the server owns a derived value
+
+Patching the changed row into local state is tempting because it is instant, but it only updates
+what the client can recompute. Anything the server derived — a group's totals, a count, a rollup —
+stays at its pre-mutation value, and the row and its header disagree on screen. Refetch instead, and
+keep one source of truth. (An admin orders list patched the row locally, so a closed order's group
+totals never moved.)
 
 ## Naming
 
@@ -282,8 +251,8 @@ Task<OrderViewWithAccount> ReconcileOrderPaymentAsync(string orderID)
 ### Name both sides of a contrast, so neither name is the default
 
 When a second API arrives that differs from an existing one along one axis, rename the original to
-name that axis too. Leaving the first as the bare name implies it is the general case and the newcomer
-a variant, and a reader choosing between them has nothing to go on but a guess.
+name that axis too. Leaving the first as the bare name implies it is the general case and the
+newcomer a variant, and a reader choosing between them has nothing to go on but a guess.
 
 ```ts
 // Before: the suffix says "value" but not how it differs, so the pair reads as general + special case
@@ -331,6 +300,25 @@ SetOfferQuantityMessage   ->  SetOfferQuantityRequest
 CardSetupSessionResponse  ->  CreateCardSetupSessionResponse
 ```
 
+### Don't give a non-wire type a wire-result name
+
+`Result` and `Response` read as "this is what the endpoint returns", so a type named that way gets
+filed with the wire contracts and eventually annotated like one. Name an internal hand-off for what
+it is instead.
+
+```csharp
+LoginResult(ClientUser User, string SessionToken)  ->  MintedSession(ClientUser User, string Token)
+```
+
+### Default an arbitrary string value to lowercase
+
+Cookie names, header names, storage keys and other strings the language doesn't constrain default to
+lowercase. Capitalise only where a language convention requires it, such as a C# type name.
+
+```csharp
+"BeerboxSession"  ->  "beerboxSession"
+```
+
 ### Name a collection for what its elements are, not for the field you happen to render
 
 A name drawn from one projection of the elements stops being true the moment a second field is used,
@@ -365,9 +353,9 @@ ServiceSettings  // settings from the service — a property of type PublicSetti
 When two things contrast (local vs remote, read vs write), name them with the words the codebase
 already uses for that split, not a synonym. Here the solution is `Beerbox.App.*` and
 `Beerbox.Service.*`, so the settings sources are `AppSettings` / `ServiceSettings` — "Service", not
-"Backend", even though "backend" is the looser everyday word. (`BackendUrl` / `IBackendConfiguration`
-kept "Backend" — they name the connection endpoint, a different concept, and weren't part of the
-split.)
+"Backend", even though "backend" is the looser everyday word. (`BackendUrl` /
+`IBackendConfiguration` kept "Backend" — they name the connection endpoint, a different concept, and
+weren't part of the split.)
 
 ### Name a mirrored third-party identifier for what it identifies, in their namespace not yours
 
@@ -476,6 +464,8 @@ rules around it:
 - `rather than`, `instead of`, `the old`, `used to` — a rejected alternative, or history
 - a sentence that paraphrases the statement directly beneath it — restatement
 - a comment describing another file's or layer's behaviour — that layer's contract, not this one's
+- `irreversible`, `one-way`, `cannot be undone` — a warning aimed at whoever _approves_ the change,
+  not at whoever reads the file later; by then the one-way step is long taken
 
 Judge them as a set rather than one at a time. Each is individually defensible; that is how a diff
 ends up carrying fourteen of them.
@@ -522,12 +512,62 @@ prepareCmd: 'node scripts/bump-version-json.mjs ${v} && git add ../../version.js
 prepareCmd: 'node scripts/bump-version-json.mjs ${v} && git add ../../version.json',
 ```
 
+### Qualify a term that collides with a more common developer meaning
+
+A word that means something else in the reader's daily context sends them down the wrong path before
+the sentence finishes. "Breakpoint" reads as the debugger's; "layout breakpoint" doesn't.
+
 ## Warnings
 
 ### Never silence a warning to make it go away
 
 Fix the underlying issue. If it genuinely can't be fixed reasonably, ask before suppressing it —
 don't decide unilaterally that a warning is acceptable.
+
+## Automation
+
+### Automation that fires on a version-control event may write derived artifacts, never tracked files
+
+A hook attached to checkout, merge, or rebase runs at a moment the user is thinking about git, not
+about your script. Rebuilding derived state there is helpful; modifying a tracked file is a change
+they didn't ask for, arriving with no diff to review, and it leaves the working tree dirty as a side
+effect of moving between branches.
+
+```bash
+# Before: resolves against the manifest and can rewrite the lockfile mid-checkout
+pnpm install
+
+# After: can only write node_modules, and installs exactly what CI installs
+pnpm install --frozen-lockfile
+```
+
+### Taking over a single-slot extension point disables whoever already held it
+
+Config that redirects a tool's plugin or hook location usually replaces rather than augments, so
+anything a previous `install` step put in the default location silently stops running. Before
+claiming the slot, enumerate what is already in it and forward each one explicitly — and write down
+the list, because the incumbent will add to it on its next upgrade. The failure is silent by
+construction: everything still exits 0, and what broke is the work that no longer happens.
+
+```bash
+# core.hooksPath moves git off .git/hooks, where `git lfs install` wrote four hooks.
+# Without an explicit forward, LFS stops smudging pointers and stops uploading on push.
+git lfs "$hook" "$@"
+```
+
+### A gate that only runs in CI will first fail in CI
+
+If a check is worth blocking a merge on, wire it into a command developers already run so it fails
+on their machine first. A separate "run this before pushing" script relies on memory, which is the
+thing that just failed. Prefer attaching it to an existing verb over inventing a new one, and leave
+the fast iteration paths unattached so the inner loop stays quick.
+
+```jsonc
+// `pnpm test` now enforces exactly what CI enforces; test:watch / test:nocoverage deliberately
+// don't, so a red lint can't block iterating on a failing test.
+"check": "pnpm run lint && pnpm run knip",
+"pretest": "pnpm run check",
+```
 
 ## Encapsulation
 
@@ -579,9 +619,9 @@ public record StripeAccountInfo(string CustomerID, string? Brand, string? Last4)
 ### Canonicalize a value in the type that owns it, not in a helper at call sites
 
 A normalization helper only fixes the call sites someone remembered to apply it to; every comparison
-site it misses is a silent mismatch. Putting the canonicalization on the owning property covers every
-consumer at once. (Moving email trim+lowercase from an `AccountManager.NormalizeEmail` helper into
-`AccountCredentials.EmailAddress` fixed two lookup paths the helper-based fix had missed.)
+site it misses is a silent mismatch. Putting the canonicalization on the owning property covers
+every consumer at once. (Moving email trim+lowercase from an `AccountManager.NormalizeEmail` helper
+into `AccountCredentials.EmailAddress` fixed two lookup paths the helper-based fix had missed.)
 
 ```csharp
 // Before: applied in one manager method; other comparisons of EmailAddress stayed raw
@@ -616,6 +656,30 @@ When the server has already applied a change out of band, read the updated state
 sending an update that sets it to what it already is. The redundant write is a wasted round trip and
 a second chance to fail. (After the card-setup return switched the account server-side, the app was
 calling UpdateAccount to set the same thing; a refresh replaced it.)
+
+### Use the single-match operation when only one element can match
+
+A loop that keeps scanning after it has found its target is handling a case the invariant forbids,
+and the reverse iteration it then needs to delete safely sends the reader looking for the
+multiple-match scenario. Find the one element and act on it.
+
+```csharp
+// Before: reverse loop so RemoveAt stays safe mid-iteration — but a second match cannot exist,
+// because a duplicate JSON name makes building the contract throw
+for (var i = typeInfo.Properties.Count - 1; i >= 0; i--)
+{
+    if (typeInfo.Properties[i].Name == nameof(CosmosDBDocument.PartitionKey))
+    {
+        typeInfo.Properties.RemoveAt(i);
+    }
+}
+
+// After
+if (typeInfo.Properties.FirstOrDefault(p => p.Name == nameof(CosmosDBDocument.PartitionKey)) is { } partitionKey)
+{
+    _ = typeInfo.Properties.Remove(partitionKey);
+}
+```
 
 ### Don't defend against a failure the codebase ignores elsewhere
 
@@ -685,6 +749,45 @@ Back-compat paths — migrating old data, tolerating a superseded format — are
 once installs exist that could be in that state. Before launch there are none, so the migration is
 untestable code guarding an impossible case.
 
+### Tolerate an absent value only where a record in that shape can exist
+
+The same field can warrant different answers in different stores, and symmetry between two models is
+not the argument — evidence that something can read back in that shape is. Nullability and a default
+are separate decisions: the first says the value can be missing, the second says the whole key can
+be. Ask which writers exist before granting either.
+
+```csharp
+// Contract: stored documents genuinely omit the property — RefreshUntappdRatingsAsync selects for
+// exactly that with IS_DEFINED — so the parameter needs the default too.
+UntappdDetails? UntappdDetails = null,
+
+// App model: the cache is written by the same build with DefaultIgnoreCondition.Never, so the key
+// is always present. Nullable, no default.
+UntappdDetails? UntappdDetails,
+```
+
+### Satisfying the type-checker must not cost a name or add a variable
+
+When a value turns nullable, add the check where the value is used. Restructuring so flow analysis
+can carry non-nullness to the use site — hoisting the object into a new local, replacing a
+well-named flag with a nullable holder — buys a mechanical guarantee with the reader's
+understanding, which is the wrong trade. The tempting restructure exists because a `bool` cannot
+carry the non-null fact to a dereference further down; a check at the dereference costs less.
+
+```csharp
+// Before
+var showGlobalRating = setting.HasFlag(GlobalRating) || (untappd.PersonalRating == 0 && ...);
+showGlobalRating ? RenderStarRating(..., untappd.GlobalRating, ...) : null
+
+// Rejected: renamed, and a third local, so the compiler could see through to the dereference
+var globalRatingSource = untappd is not null && (...) ? untappd : null;
+globalRatingSource is not null ? RenderStarRating(..., globalRatingSource.GlobalRating, ...) : null
+
+// Accepted: same names, same shape, nullability handled where it arises
+var showGlobalRating = setting.HasFlag(GlobalRating) || (untappd?.PersonalRating == 0 && ...);
+untappd is not null && showGlobalRating ? RenderStarRating(..., untappd.GlobalRating, ...) : null
+```
+
 ## Validation
 
 ### Reject a shape that has no correct use, rather than leaving it legal and documenting it
@@ -710,12 +813,43 @@ public sealed class Leaf(JourneyStep[] steps, [CallerMemberName] string name = "
     );
 ```
 
+### Enforce a server-owned invariant at the server, not in the client's type system
+
+When a value is the server's to decide, a client type shaped to avoid sending a wrong one is a
+workaround: every other client has to repeat it, and a hand-rolled request bypasses it entirely.
+Move the check into the write path and let the client's types stay plain — the guard usually costs
+less than the workaround it replaces.
+
+```ts
+// Before: a webapp-only type existed solely to keep a blank id out of the payload
+type SettingsDocument = Pick<API.Settings, '_etag'> & SettingsFormData;
+
+// After: state is the generated type again, because the service now owns the id
+const [settings, setSettings] = useState<API.Settings | undefined>(undefined);
+```
+
+### Fill in what the caller could not know; reject what it got wrong
+
+Absent and incorrect are different errors and deserve different answers. A caller that omits a value
+it has no way to know — the id of a singleton document it has never been told — should have it
+filled in. A caller that supplies a _different_ value is mistaken or probing, and quietly rewriting
+that hides it. Split the guard so the loud case stays loud.
+
+```csharp
+// An empty id is the blank admin form creating the document; any other id names something else
+if (!string.IsNullOrEmpty(settings.ID) && settings.ID != Settings.SettingsID)
+{
+    throw new ArgumentException($"The settings document id must be '{Settings.SettingsID}'.", nameof(settings));
+}
+settings = settings with { ID = Settings.SettingsID };
+```
+
 ### Fail where a bad value is produced, not where it is consumed
 
 A step that writes an empty or invalid value onward keeps going, and the build or request dies later
-inside whatever consumes it — so the error names the consumer, and the reader starts investigating the
-wrong file. Guard at the point of production, where the cause is still in hand, and put the cause in
-the message.
+inside whatever consumes it — so the error names the consumer, and the reader starts investigating
+the wrong file. Guard at the point of production, where the cause is still in hand, and put the
+cause in the message.
 
 ```xml
 <!-- Stamping an empty versionCode succeeded here, then failed ~40s later in the Android resource
@@ -735,22 +869,20 @@ consistent with the existing reference-exists and no-overlap checks there). Whet
 is non-empty or well-formed depends only on itself, and stays in the form's validation. Don't read
 the absence of server-side field checks as a reason to drop the cross-record ones.
 
-### Don't require in the form a field the server treats as optional
+### Let the version token decide which error a mismatched write reports
 
-Before adding a field to a form's validity check, confirm the write path actually demands it. An
-optional field made required blocks legitimate records, and every server test stays green — the
-server never rejected it in the first place, so nothing goes red. Pin the optionality with a test
-asserting the form stays submittable while the field is empty; without one, nothing records that the
-omission was deliberate, and the next pass that tightens validation takes it out silently.
+An optimistic-concurrency token proves the caller's copy was current; it says nothing about _what_
+the caller changed, so it can never stand in for an invariant check. It does tell you which error is
+honest when both could explain the same mismatch: on a stale copy the mismatch is a lost-update race
+and belongs to the conflict the store will raise anyway, while the same mismatch on a current copy
+is the caller writing a field it doesn't own. Gate the invariant's rejection on the token matching,
+and let the stale case fall through.
 
-```tsx
-// SKU is optional — an empty one is exempt from the (SupplierID, SKU) uniqueness check — so it
-// stays out of isFormValid, and this is the only thing saying so
-it("leaves create enabled when the SKU is empty", async () => {
-  await fillRequiredFields(user);
-
-  expect(screen.getByRole("button", { name: "Create" })).toBeEnabled();
-});
+```csharp
+// A stale copy falls through to ReplaceItemAsync's 412; only a current copy earns the 400
+return product.Quantity != existingProduct.Quantity && product.ETag == existingProduct.ETag
+    ? throw new ArgumentException("A product edit cannot change Quantity…", nameof(product))
+    : await Database.ReplaceItemAsync(product, product.ID, product.ETag);
 ```
 
 ### Validate an untrusted path against the resolved full path, not its segments
@@ -839,16 +971,29 @@ goes red before claiming it works.
 
 ### Run a format parser over the real corpus, not just hand-written fixtures
 
-Fixtures encode the cases you already thought of, so they confirm the parser rather than test it. The
-real file carries the distribution — the placeholder rows, the near-duplicates, the records that
-break an assumption you didn't know you'd made — and finding those costs one throwaway run. Turn what
-it finds into fixtures, so the regression is pinned without the corpus.
+Fixtures encode the cases you already thought of, so they confirm the parser rather than test it.
+The real file carries the distribution — the placeholder rows, the near-duplicates, the records that
+break an assumption you didn't know you'd made — and finding those costs one throwaway run. Turn
+what it finds into fixtures, so the regression is pinned without the corpus.
 
 ```
 Downloading Japan Post's 124,513-row file and running the importer over it found two defects
 that every hand-written fixture had passed: rows that collapsed to duplicates once a
 parenthesised note was stripped, and 134 codes spanning more than one city, which made a
 picker label render blank.
+```
+
+### A tool accepting a flag is not evidence that the flag does anything
+
+Many tools ignore unrecognised options rather than rejecting them, so a clean exit says only that
+nothing crashed. Confirm the option exists in the documentation, or run the control: pass a
+deliberately nonsensical name and see whether the tool objects. If it doesn't, acceptance proved
+nothing and the flag has to be verified by its effect instead.
+
+```
+$ pnpm install --config.thisIsNotARealSetting=false --frozen-lockfile
+Already up to date
+Done in 159ms                       # exit 0 — pnpm ignores unknown config keys entirely
 ```
 
 ### Capture failure evidence before running the diagnostics that explain it

@@ -374,6 +374,14 @@ overrides only `Read`/`Write` leaves the base versions throwing `NotSupportedExc
 uses that path until then. Forward the property-name pair (and any other override) to the inner
 converter.
 
+### A base-record constructor argument is not immune to the wire
+
+A derived record that passes a constant to its base — `: CosmosDBDocument(SettingsID, ETag)` — looks
+like it fixes that property. It doesn't. The base's positional property has an `init` accessor and is
+not a parameter of the derived record's constructor, so System.Text.Json sets it from the incoming
+JSON _after_ construction, and the constant is overwritten by whatever the caller sent. A singleton
+document's fixed id therefore has to be enforced, not merely declared.
+
 ## Strings
 
 ### Prefer `string.Empty` over `""` in production code
@@ -403,6 +411,25 @@ var name = $"{typeof(EmbeddedResources).Namespace}.{folder}.{filename}";
 ```
 
 ## Error handling
+
+### Reach for the argument-exception `ThrowIf*` helpers rather than a hand-rolled throw
+
+`ArgumentNullException`, `ArgumentException`, and `ArgumentOutOfRangeException` all carry static
+guards — `ThrowIfNegative`, `ThrowIfGreaterThan`, `ThrowIfLessThan`, `ThrowIfNullOrWhiteSpace` — that
+put the bound in the call and produce the standard message. There is no combined range helper;
+express a range as two calls.
+
+```csharp
+// Before
+private static DayOfWeek ToDayOfWeek(int closingDayOfWeek) =>
+    closingDayOfWeek is >= 0 and <= 6
+        ? (DayOfWeek)closingDayOfWeek
+        : throw new ArgumentOutOfRangeException(nameof(closingDayOfWeek), closingDayOfWeek, "…");
+
+// After
+ArgumentOutOfRangeException.ThrowIfNegative(closingDayOfWeek, nameof(closingDayOfWeek));
+ArgumentOutOfRangeException.ThrowIfGreaterThan(closingDayOfWeek, (int)DayOfWeek.Saturday, nameof(closingDayOfWeek));
+```
 
 ### Catch only specific exceptions you can handle
 
