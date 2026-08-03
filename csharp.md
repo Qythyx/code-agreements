@@ -81,6 +81,25 @@ using static MyApp.Core.Resources.EmbeddedResources;
 GetHtmlTemplate(HtmlTemplates.WelcomeEmailCss)
 ```
 
+### Don't namespace-qualify a name that already resolves, including in `<see cref>`
+
+A namespace prefix on a type that a `using` or the enclosing namespace already brings into scope is
+noise — the reader gains nothing the compiler didn't already know. This is about namespace prefixes,
+not about `using static`: qualifying a member by its own type still earns its token, per the entry
+above.
+
+```csharp
+// Before
+foreach (var template in Enum.GetValues<Core.Resources.HtmlTemplate>())
+public class WebAuthenticationCallbackActivity : Microsoft.Maui.Authentication.WebAuthenticatorCallbackActivity
+/// Mirrors the framework's <see cref="MobileJourneys.Dsl"/>.
+
+// After
+foreach (var template in Enum.GetValues<HtmlTemplate>())
+public class WebAuthenticationCallbackActivity : WebAuthenticatorCallbackActivity
+/// Mirrors the framework's <see cref="Dsl"/>.
+```
+
 ### A new namespace shadows a using-imported class of the same name
 
 Namespaces win over using-imported types in C# name resolution, so introducing `Foo.Bar.Templates`
@@ -326,6 +345,16 @@ Push the same rule down to the underlying type: keep the constructor's collectio
 unambiguous, and callers that construct it directly (its own unit tests) read the collections the same
 bracketed way the factory emits — one shape to reason about, not two.
 
+### `Task<T>` is not covariant, so materializing then re-widening is load-bearing
+
+`Task.FromResult(items.ToArray())` is a `Task<T[]>` and will not convert to `Task<IEnumerable<T>>`,
+so the `.AsEnumerable()` that looks redundant after `.ToArray()` is what makes the call compile.
+Don't tidy it away.
+
+```csharp
+return Task.FromResult(sorted.ToArray().AsEnumerable());
+```
+
 ## Enums and switch expressions
 
 ### Declare explicit enum values
@@ -486,6 +515,22 @@ into the expression tree as a constant that JustMock matches exactly. An arrange
 argument therefore only matches when the test method happens to share the production caller's name —
 and fails mysteriously when it doesn't. Pass the argument explicitly: `nameof(TheManager.TheMethod)`
 to assert the value, or `Arg.AnyString` to ignore it.
+
+### A fake store must return a snapshot, not a deferred view over its own state
+
+LINQ in a fake's query method is lazy, so the enumerable it hands back is evaluated after the method
+returns — a live view of the backing collection. A lock around the method body does not help, because
+the enumeration happens outside it, and the first concurrent caller then gets a moving target or a
+"collection was modified" throw. Materialize inside the lock, which is what a real database query
+does anyway.
+
+```csharp
+// Before: deferred over _collections, evaluated by the caller
+return Task.FromResult(sorted.AsEnumerable());
+
+// After
+return Task.FromResult(sorted.ToArray().AsEnumerable());
+```
 
 ## Documentation
 

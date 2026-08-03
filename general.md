@@ -234,6 +234,21 @@ stays at its pre-mutation value, and the row and its header disagree on screen. 
 keep one source of truth. (An admin orders list patched the row locally, so a closed order's group
 totals never moved.)
 
+### When fixing a defect inside an expression, change the wrong term and nothing else
+
+Restructuring the expression around the fix makes the diff about your preferences rather than the
+bug, and the reviewer then has to re-derive the behaviour change from a rewritten shape. It also
+risks reverting the fix if they reject the restructuring — which is exactly what happened here twice
+before the one-token change landed. A named intermediate that states a condition's intent survives
+this even at a single use site; "used once" is not on its own a reason to inline it.
+
+```csharp
+// The whole fix: one comparison. wantPersonalRating stays, and the surrounding lines stay.
+var showGlobalRating =
+    _settings.UntappdSetting.HasFlag(UntappdSetting.GlobalRating)
+    || (wantPersonalRating && personalRating == 0);
+```
+
 ## Naming
 
 ### Name an identifier parameter for what it identifies
@@ -373,6 +388,26 @@ public record UntappdDetails(int BeverageID, ...)
 // but its catalogue now covers cider, mead and spirits.
 public record UntappdDetails(int UntappdBeverageID, ...)
 ```
+
+### Name an outcome for what happened, not for what the caller will do about it
+
+A result named after its consequence bakes one caller's reaction into a value other callers have to
+reinterpret, and it reads as a command rather than a report. Name the condition; let the caller name
+the response.
+
+```csharp
+// Before: the name is the caller's reaction, decided in the wrong place
+private enum ReadOutcome { NothingRead, Written, LinkDropped }
+
+// After: what the service actually said. Dropping the link is what one caller then does.
+private enum ReadOutcome { NothingRead, Written, TokenRejected }
+```
+
+### Name an action type for the verb it performs
+
+An action that wraps or decorates another still names an action, so it takes the imperative form its
+siblings use — `Hold(Tap(id))`, alongside `Tap`, `TypeText`, `DismissAlert`. A participle like
+`Held` describes the state the subject ends in rather than what the step does.
 
 ## Renaming
 
@@ -788,6 +823,32 @@ var showGlobalRating = setting.HasFlag(GlobalRating) || (untappd?.PersonalRating
 untappd is not null && showGlobalRating ? RenderStarRating(..., untappd.GlobalRating, ...) : null
 ```
 
+### Don't hand-roll a guarantee the platform already makes
+
+Check the platform's documented behaviour before building mutual exclusion, retry, or overlap
+detection. Beyond being redundant, a hand-rolled version is usually _worse_: the platform's is a
+lease that expires, while a flag in your own store is a poison pill — a run killed mid-flight leaves
+it set and silently blocks every later run.
+
+```
+Azure Functions timer triggers, verbatim: "only a single instance of a timer-triggered function is
+run across all instances. It will not trigger again if there is an outstanding invocation still
+running." Overlap detection in the manager would have duplicated that with a worse mechanism.
+```
+
+### Remove a limit whose value is a guess, when exceeding it fails loudly and capping it fails silently
+
+A guessed cap cannot reliably prevent the failure it was added for: set too high it never binds, set
+too low it throttles throughput with no signal. Prefer the loud failure — it names the problem and
+suggests the fix — over a silent ceiling nobody will revisit. This only holds when overrunning is
+safe: check that partial progress is durable and that the next run resumes where this one stopped.
+
+```
+A 50-account cap on an hourly refresh was removed. Each account's results are written as it
+finishes and the queue is ordered by staleness, so a run killed by the function timeout keeps its
+work and the tail arrives next run — and a timeout is visible, where a too-low cap is not.
+```
+
 ## Validation
 
 ### Reject a shape that has no correct use, rather than leaving it legal and documenting it
@@ -954,6 +1015,20 @@ the check stays green and the suite fails on the next real run.
 The trap is that the rendering change need not look like one. A rename that touches only identifiers
 is safe; the same commit editing one user-visible string is not, and nothing in a compiler, a unit
 test, or the path check distinguishes them. Open a baseline and look at it.
+
+### A sampled high-water mark is not a concurrency assertion
+
+`mark = Math.Max(mark, Interlocked.Increment(ref n))` is a non-atomic read-modify-write: the thread
+that observed the peak can be overwritten by one that observed less, so the test fails at random.
+Require the overlap instead of sampling it — have each caller wait until N are in flight together.
+That is deterministic, and it fails rather than hangs when the code turns out to be sequential.
+
+```csharp
+// Completes only on genuine overlap; sequential code leaves each caller waiting out the timeout
+if (Interlocked.Increment(ref inFlight) == count) { _ = allInFlight.TrySetResult(); }
+_ = await Task.WhenAny(allInFlight.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+_ = Interlocked.Decrement(ref inFlight);
+```
 
 ## Evidence
 
