@@ -166,18 +166,13 @@ rather than a `// --- Name ---` comment. Name the `#endregion` too, so the closi
 region it ends. The regions collapse in the editor; a comment banner doesn't.
 
 A region has to earn its place: a handful of adjacent one-line constants is already legible, and
-wrapping it costs two lines to save none. (A `#region Source columns` around four `private const int`
-column indices was removed.)
+wrapping it costs two lines to save none.
 
 ```csharp
-// Before
-// --- Actions ---
-public static Tap Tap(string automationId) => new(automationId);
-
-// After
-#region Actions
-public static Tap Tap(string automationId) => new(automationId);
-#endregion Actions
+// Before          // After
+// --- Actions --- #region Actions
+                   …
+                   #endregion Actions
 ```
 
 ## Conditional compilation
@@ -225,6 +220,12 @@ return await Database.CreateItemAsync(beverage);
 // After
 return await Database.CreateItemAsync(await EnsureBeverageSupplierAndSkuValidAsync(beverage));
 ```
+
+### Return `Task`, not `Task<T>`, when no caller uses the value
+
+A count or flag that only the method itself consumes — for a log line, say — turns every call site
+into `_ = await …`. Drop the result and the discard goes with it. The same reasoning as a
+`Task<bool>` that only ever returns `true`.
 
 ### Make every argument explicit at the call site
 
@@ -298,15 +299,31 @@ documents or payloads can omit the property, either coerce in a property initial
 migration that backfills every document). Deciding which is a judgment call: the coercion was
 dropped on Beverage/Supplier because a pre-launch migration guaranteed the data instead.
 
+### `null!` on the way out is a lie a strict serializer catches at runtime
+
+The null-forgiving operator silences the compiler; it does not make the value non-null. Where the
+serializer respects nullable annotations it refuses to _write_ null from a non-nullable member, so
+the throw lands at send time — and if the send is wrapped in a catch that reports transport failure,
+the request never leaves and the symptom is "the network is down".
+
+Pass the empty string instead when the member genuinely has no value yet, per the
+`Prefer empty string over null for optional text` entry in `general.md`.
+
+```csharp
+// Before: the caller is asking who it is, so it cannot know the ID — but null cannot be serialized
+new CredentialsMessage(new(email, null!, clientToken))
+
+// After
+new CredentialsMessage(new(email, string.Empty, clientToken))
+```
+
 ### Turn "this must go through that path" into a compile error with an `[Obsolete(error: true)]` overload
 
 C# has no negative generic constraint — you cannot write `where T : not IFoo`. To stop a caller
 routing a marked type through the general-purpose method, add an overload taking the more-derived
 type and mark it as an error. Overload resolution prefers it whenever the argument's static type is
-the marked one, so the wrong call fails to compile.
-
-It catches the ordinary mistake, not a value upcast to the base interface first, so pair it with a
-`[Conditional("DEBUG")]` assert in the general method if that hole matters.
+the marked one, so the wrong call fails to compile. It catches the ordinary mistake, not a value
+upcast to the base interface first.
 
 ```csharp
 [Obsolete("Authenticated requests must go through SendAuthenticatedMessage.", error: true)]
@@ -318,40 +335,20 @@ private static Task<ServiceResult<T>> SendMessage<T>(string path, IAuthenticated
 Keep the shared implementation in a separate core method that both the guarded and the marked path
 call, rather than casting past the guard at the one legitimate call site.
 
-### Expose a stateless DSL as `using static` factories, not an inheritance base
+### Expose a private collection as a snapshot, not as a live view of it
 
-To let callers write `Branch("Menu", Step(Tap(id)))` instead of a wall of `new`, put the helpers as
-`public static` methods on a static class and import them with `using static`. Don't reach for an
-abstract base the caller inherits (the MauiReactor-`Component` shape): that forces the caller
-non-static, and a field initializer — where these forests are usually built — cannot call an
-instance method (CS0236). You'd be pushed to `protected static` anyway, at which point the base
-class earns nothing that `using static` doesn't. A method may share its name with its return type
-(`public static Tap Tap(string id) => new(id);`); in call position the method wins, in type position
-the type wins.
-
-### A factory that returns the concrete type removes bracket noise a raw constructor needs
-
-A target-typed `new()` passed as the sole element of a `params` array is ambiguous (CS8752 — array
-or element?), which is what forces `[new(...)]` brackets. A factory call carries a concrete return
-type, so `Branch("About", Step(...))` binds the `params` cleanly with no brackets. This lets one
-overload take `params JourneyStep[] steps` (bare, for the common leaf) and a second take an explicit
-`JourneyStep[] steps, Branch[] children` (both bracketed, for the rarer interior node) without the
-two colliding — the three-argument overload can't match a two-argument call, so there's no CS0121.
-Keep the second overload's trailing array a plain required parameter, not `params`; a `params` there
-would match the two-argument leaf call with an empty array and reintroduce the ambiguity.
-
-Push the same rule down to the underlying type: keep the constructor's collection parameters explicit
-(non-`params`) and let the factory layer own the bare-call ergonomics. The type's contract stays
-unambiguous, and callers that construct it directly (its own unit tests) read the collections the same
-bracketed way the factory emits — one shape to reason about, not two.
-
-### `Task<T>` is not covariant, so materializing then re-widening is load-bearing
-
-`Task.FromResult(items.ToArray())` is a `Task<T[]>` and will not convert to `Task<IEnumerable<T>>`,
-so the `.AsEnumerable()` that looks redundant after `.ToArray()` is what makes the call compile.
-Don't tidy it away.
+Handing back the backing collection — or a deferred LINQ query over it, which is the same thing
+evaluated later — gives the caller a handle on your state instead of a value. They can cast an
+`IEnumerable<T>` back to `List<T>` and write to it, and a caller enumerating while you mutate gets a
+moving target or a "Collection was modified" throw. Copy before returning, inside the lock if there
+is one. A read-only return type declares the intent but doesn't enforce it; the copy is what does.
 
 ```csharp
+// Before: deferred over the private collection, so the caller evaluates it against live state
+return Task.FromResult(sorted.AsEnumerable());
+
+// After. The .AsEnumerable() is load-bearing, not redundant: Task<T> is not covariant, so
+// Task<T[]> will not convert to Task<IEnumerable<T>>. Don't tidy it away.
 return Task.FromResult(sorted.ToArray().AsEnumerable());
 ```
 
@@ -395,13 +392,28 @@ Enum.TryParse<T>(name, ignoreCase: true, out var value) && Enum.IsDefined(value)
 
 ## Serialization
 
-### A `JsonConverter<T>` that wraps another must forward every override, not just `Read`/`Write`
+### A nullable wire member is optional only once it also carries a default
 
-`ReadAsPropertyName`/`WriteAsPropertyName` handle the type as a dictionary key. A wrapper that
-overrides only `Read`/`Write` leaves the base versions throwing `NotSupportedException`, so a
-`Dictionary<TKey, …>` on the wire breaks the first time someone adds one — silently, because nothing
-uses that path until then. Forward the property-name pair (and any other override) to the inner
-converter.
+Under `RespectRequiredConstructorParameters`, a constructor parameter is optional exactly when it has
+a default value — nullability has nothing to do with it. That matters because the codegen on the
+other side usually reads optionality off the nullability alone: TypeGen exports `DateTime? From` as
+`From?`, the client legitimately sends no key, and the server rejects the payload it published a
+contract for. Give every nullable parameter a default, which also means putting the required
+parameters first. Audit this with a test over every wire type rather than a grep, which misses
+multi-line record declarations.
+
+```csharp
+// Before: TypeScript says all four are optional; the server demands all four
+public record ListOrdersRequest(DateTime? From, DateTime? To, PagedRequest? PagedRequest, bool? GroupByDate) : IMessage;
+
+// After
+public record ListOrdersRequest(
+    DateTime? From = null,
+    DateTime? To = null,
+    PagedRequest? PagedRequest = null,
+    bool? GroupByDate = null
+) : IMessage;
+```
 
 ### A base-record constructor argument is not immune to the wire
 
@@ -507,31 +519,6 @@ public class AdministrationManagerTest : BaseTest
 }
 ```
 
-### Pass caller-info arguments explicitly in mock arrangements
-
-`[CallerMemberName]` is filled in at each call site with the name of the member containing the call.
-In a JustMock arrangement lambda, that member is the _test method_, and the compiler bakes its name
-into the expression tree as a constant that JustMock matches exactly. An arrangement that omits the
-argument therefore only matches when the test method happens to share the production caller's name —
-and fails mysteriously when it doesn't. Pass the argument explicitly: `nameof(TheManager.TheMethod)`
-to assert the value, or `Arg.AnyString` to ignore it.
-
-### A fake store must return a snapshot, not a deferred view over its own state
-
-LINQ in a fake's query method is lazy, so the enumerable it hands back is evaluated after the method
-returns — a live view of the backing collection. A lock around the method body does not help, because
-the enumeration happens outside it, and the first concurrent caller then gets a moving target or a
-"collection was modified" throw. Materialize inside the lock, which is what a real database query
-does anyway.
-
-```csharp
-// Before: deferred over _collections, evaluated by the caller
-return Task.FromResult(sorted.AsEnumerable());
-
-// After
-return Task.FromResult(sorted.ToArray().AsEnumerable());
-```
-
 ## Documentation
 
 ### Document every parameter on a public API
@@ -539,3 +526,21 @@ return Task.FromResult(sorted.ToArray().AsEnumerable());
 XML doc comments on public APIs get a `<param>` tag for each parameter — no exceptions. Document
 assumptions, side effects, and non-obvious design decisions; don't restate what the signature
 already says.
+
+### Name code in a doc comment with `<see cref>`, never `<c>`
+
+A name inside `<c>` is a string: rename the thing and the comment silently becomes a lie. A `cref`
+is resolved by the compiler, so the same rename produces CS1574 and the comment gets fixed with the
+code. Qualify only as far as it takes to resolve — an ambiguous simple name needs the namespace,
+per the entry above.
+
+Leave `<c>` for the things the compiler cannot check: shell commands, JavaScript, platform
+constants from outside the solution, and private members of another class.
+
+```csharp
+// Before
+/// alongside <c>MobileJourneys.Dsl</c> so journey definitions read as bare calls.
+
+// After — bare, because a using already brings it into scope
+/// alongside <see cref="Dsl"/> so journey definitions read as bare calls.
+```

@@ -20,16 +20,20 @@ else, because the copies drift.
 A client deserializing a whole response throws the entire payload away on an enum value it doesn't
 recognise, so adding a member becomes a breaking change for every already-shipped client. Read an
 unknown value as a designated neutral fallback member instead of throwing, and degrade that one
-field. Make the tolerance opt-in per enum — a value should never be silently mislabelled without a
-deliberate choice — so an enum that only travels toward a peer that's always current (or is
-untrusted input you want to reject) stays strict. The fallback has to ship in the client's _first_
-release; it can't be added retroactively to a build already in someone's hands.
+field. Make the tolerance opt-in per enum, so one that only travels toward an always-current peer
+stays strict. The fallback has to ship in the client's _first_ release; it can't be added
+retroactively to a build already in someone's hands.
 
 ### Centralise a repeated correctness check behind one named guard
 
 Duplicating a check is worse than duplicating a fact: every hand-written copy is a fresh chance to
 invert the comparison, forget the throw, or pick the wrong status code. Where the check enforces a
 security invariant, a bad copy is a vulnerability rather than drift.
+
+Calling the guard is still a convention, though, and a new call site that forgets it compiles and
+ships. Where the cost of missing it is real, encode the routing in the type system so the wrong path
+fails to compile. The tell that a convention isn't enough: count the call sites the guard actually
+covers, not the ones you remember writing.
 
 ```csharp
 // Before: written out at seven call sites
@@ -42,52 +46,14 @@ if (await ResolveAccountID(credentials) != credentials.AccountID)
 await AssertCredentials(credentials);
 ```
 
-### Make the invariant structural when a centralised check can still be bypassed
-
-Centralising a check behind one guard removes the copies, but calling it is still a convention — a
-new call site that forgets it compiles and ships. When the cost of missing it is real, encode
-"requests of this kind must go through that path" in the type system, so the wrong route fails to
-compile rather than failing silently at runtime.
-
-The tell that a convention isn't enough: count the call sites the guard actually covers. A
-`DataManager`-level eviction check sat at four result checks and looked complete, but two of the
-seven authenticated endpoints returned the connector's result directly and were never checked.
-
-```csharp
-// Before: every authenticated call had to remember to check the result
-var result = await ServiceConnector.GetOrderYearsAsync(credentials);   // check omitted — silent gap
-
-// After: the marker interface routes it, and only that path can carry it
-private async Task<ServiceResult<T>> SendAuthenticatedMessage<T>(string path, IAuthenticatedMessage message)
-```
-
 ### Don't identify a specific failure by its HTTP status alone
 
 A status code is a namespace shared with infrastructure you don't control: a proxy, WAF, CDN, or
 rate limiter can return 401/403/503 without your service being involved. Keying behaviour on the
 status means acting on failures you didn't produce. Carry an application-level reason in the
-response body and key on that; anything unparseable — an HTML challenge page, a truncated body —
-then degrades to "no reason given" instead of impersonating a real one.
-
-This also beats picking a "more correct" status. Moving credential rejection from 403 to 401 is
-semantically better, but only trades a collision with the edge for a collision with the host's own
-auth failures.
-
-### Collapse a signal that every in-flight request will independently discover
-
-When a state change invalidates work already in flight, each outstanding request discovers it
-separately and will raise its own notification — so a user-visible response fires once per request
-rather than once per event. Collapse it at the point that owns the state, and re-arm the latch when
-the state can recur, or the second occurrence is swallowed forever.
-
-Guards checked before a request is issued do not help here: everything already in flight passed
-them.
-
-```csharp
-// Fires once per session, not once per rejected request
-if (Interlocked.Exchange(ref _sessionEvictionHandled, 1) == 1) { return; }
-// ...and SetAccount resets it to 0, so signing back in can be evicted again
-```
+response body and key on that; anything unparseable then degrades to "no reason given" instead of
+impersonating a real one. Picking a "more correct" status is not the fix — it only trades a
+collision with the edge for one with the host's own auth failures.
 
 ### A caller-side guard only suppresses the effects the caller owns
 
@@ -96,37 +62,12 @@ hands control to the caller's handler, a check inside that handler cannot undo t
 guard into the shared layer is then not just less duplication; it is the only placement that reaches
 every effect. Count the effects, not the call sites, when deciding where the guard goes.
 
-```tsx
-// Before: each page dropped a superseded response inside its own success handler — but the shared
-// executeAction had already raised the error banner for a superseded *failure*, and clobbered the
-// state a newer successful call had just cleared. No amount of page-side guarding reaches that.
-okHandler: data => {
-  if (seq !== loadSeq.current) { return; }
-  setUsers(data.Items);
-}
-
-// After: the shared layer knows the call was superseded, so it skips every effect including its own
-void executeAction({ action: signal => user.Service.GetUsers(request, signal), supersedeKey: 'users', ... })
-```
-
 ### Collapse near-identical functions into one core parameterized by what differs
 
 When several functions share the same skeleton and vary only along an axis or two, extract the
 skeleton into one core that takes the varying parts as parameters (usually delegates), and reduce
 each function to a thin wrapper. Parallel copies force every change to be pasted into each one, and
 drift the moment a paste is missed.
-
-```csharp
-// Before: six HandleRequest* methods each repeated the same exception→response catch chain;
-// adding a JsonException case meant pasting it into all six.
-
-// After: one core owns the chain; each variant passes only the two things that differed
-private async Task<HttpResponseData> HandleRequest(
-    HttpRequestData request,
-    Func<Task<HttpResponseData>> respond,
-    Func<HttpStatusCode, string, Task<HttpResponseData>> createErrorResponse
-)
-```
 
 ### Prefer empty string over null for optional text
 
@@ -169,70 +110,33 @@ render at once, they drift apart, and a reader has to hold two things where one 
 /* Before: the failing edge owned the outline, so the neutral edge arrived as a box-shadow —
    and a failing box drew both, one just outside the other */
 .node {
-	box-shadow: 0 0 0 calc(1px * var(--inv)) rgba(255, 255, 255, 0.16);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 .node.has-fail {
-	outline: calc(2px * var(--inv)) solid var(--fail);
+  outline: 2px solid var(--fail);
 }
 
 /* After: one outline, recoloured per state */
 .node {
-	outline: calc(1px * var(--inv)) solid rgba(255, 255, 255, 0.16);
+  outline: 1px solid rgba(255, 255, 255, 0.16);
 }
 .node.has-fail {
-	outline: calc(2px * var(--inv)) solid var(--fail);
+  outline: 2px solid var(--fail);
 }
 ```
-
-### Don't back off a poll the user is sitting and waiting on
-
-Exponential backoff assumes nobody is watching. When the poll drives a screen the user is blocked
-on, the interval is at its longest exactly when they come back and expect the result — a 2s base
-growing ×1.5 to a 10s cap is already capped after ~26s on screen, inside the window a verification
-email arrives in. Keep the interval flat and short, and where the platform offers a signal that the
-user has returned (app resume), cut the current wait short and poll immediately.
-
-The load this trades away is worth it when the operation is rare and blocking: a login happens once
-per user, so the extra requests are negligible against seconds of visible dead time.
-
-```csharp
-// Before: interval peaks right when the user returns from their email app
-await Task.Delay(delayMs + Random.Shared.Next(0, 500));
-delayMs = Math.Min(PollMaxDelayMs, (int)(delayMs * 1.5));
-
-// After: flat and short, and the resume signal ends the wait early
-var wake = _resumeWake.Task;
-_ = await Task.WhenAny(wake, Task.Delay(PollIntervalMs + Random.Shared.Next(0, PollJitterMs)));
-```
-
-### Skip the work rather than throttling it when the precondition is absent
-
-The cheaper half of the same problem: a poll that can't succeed — offline, or backgrounded — should
-not run at all. Gating on the precondition removes both the request and the exception telemetry it
-would produce, without slowing the poll down for the user who is actually waiting.
 
 ### Identify a user in telemetry by a stable opaque ID, never by PII or anything derived from it
 
-The email is personal data, so it can't go to an analytics backend raw — but hashing it doesn't
-solve the problem it looks like it solves. The hash is only as stable as its input, and the input is
-something the user can edit: change the email and every event from before the change is orphaned
-from every event after it. Use the account's own ID, which is opaque, not personal data, and doesn't
-move when the profile does.
-
-### Put an expensive or irreversible action behind a deliberate second keystroke
-
-A single key that spends minutes of machine time, or that can't be undone, will eventually be hit by
-accident. A two-key chord costs the deliberate user almost nothing and makes the accident
-impossible. (Re-running a UI-test journey moved from `r` to `r` followed by `r`/`a`/`f` for its
-scope.)
+Hashing the email doesn't solve the problem it looks like it solves: the hash is only as stable as
+its input, and the user can edit that input, orphaning every event from before the change. Use the
+account's own ID, which is opaque and doesn't move when the profile does.
 
 ### Refetch after a mutation when the server owns a derived value
 
 Patching the changed row into local state is tempting because it is instant, but it only updates
 what the client can recompute. Anything the server derived — a group's totals, a count, a rollup —
 stays at its pre-mutation value, and the row and its header disagree on screen. Refetch instead, and
-keep one source of truth. (An admin orders list patched the row locally, so a closed order's group
-totals never moved.)
+keep one source of truth.
 
 ### When fixing a defect inside an expression, change the wrong term and nothing else
 
@@ -310,18 +214,13 @@ public enum ServiceRejectionReason { NotApplicable = 0, InvalidCredentials = 1 }
 `Request` and `Response` say which direction a type travels and what it's for. `Message` says only
 that it crosses the wire, which every one of them does.
 
+The converse holds too: `Result` and `Response` on a type that never crosses the wire gets it filed
+with the contracts and eventually annotated like one. Name an internal hand-off for what it is.
+
 ```csharp
 SetOfferQuantityMessage   ->  SetOfferQuantityRequest
 CardSetupSessionResponse  ->  CreateCardSetupSessionResponse
-```
 
-### Don't give a non-wire type a wire-result name
-
-`Result` and `Response` read as "this is what the endpoint returns", so a type named that way gets
-filed with the wire contracts and eventually annotated like one. Name an internal hand-off for what
-it is instead.
-
-```csharp
 LoginResult(ClientUser User, string SessionToken)  ->  MintedSession(ClientUser User, string Token)
 ```
 
@@ -349,43 +248,29 @@ public IReadOnlyList<PostalCodeEntry> Matches { get; set; } = [];
 
 ### Name a holder for its role, not the type it carries
 
-A service or property that carries a value is named for the role it plays — where the value comes
-from, what it's for — even when the value's own type is named for something else. Renaming the
-holder to echo the type throws away the distinction the role name was drawing.
+A property that carries a value is named for the role it plays — where the value comes from, what
+it's for — even when the value's own type is named for something else. Draw the contrast from the
+words the codebase already uses for that split, not a synonym: with `App.*` and `Service.*`
+assemblies, the two settings sources are `AppSettings` and `ServiceSettings`, not `BackendSettings`.
 
 ```csharp
-// The app has two settings sources; the accessor names which is which.
 AppSettings      // local device preferences
-ServiceSettings  // settings from the service — a property of type PublicSettings
-
-// PublicSettings names the wire projection's visibility (public vs the full admin doc);
-// the app-side accessor names provenance. Renaming it PublicSettings would lose the
-// local-vs-remote contrast with AppSettings.
+ServiceSettings  // from the service — a property of type PublicSettings, and named for provenance
+                 // rather than echoing the type, which would lose the contrast with AppSettings
 ```
-
-### Draw a naming axis from the codebase's own module vocabulary
-
-When two things contrast (local vs remote, read vs write), name them with the words the codebase
-already uses for that split, not a synonym. Here the solution is `Beerbox.App.*` and
-`Beerbox.Service.*`, so the settings sources are `AppSettings` / `ServiceSettings` — "Service", not
-"Backend", even though "backend" is the looser everyday word. (`BackendUrl` /
-`IBackendConfiguration` kept "Backend" — they name the connection endpoint, a different concept, and
-weren't part of the split.)
 
 ### Name a mirrored third-party identifier for what it identifies, in their namespace not yours
 
 A field holding another system's id needs two things the obvious name usually drops: whose id it is,
 and what it points at. Naming it after your own entity is the worse failure — it reads as a foreign
-key into your data and will be used as one. Reach for the vendor's own current vocabulary, but not
-their legacy label: a term they keep for backwards compatibility describes what their product was,
-not what it now covers.
+key into your data and will be used as one. Reach for the vendor's current vocabulary, not the
+legacy label they keep for backwards compatibility.
 
 ```csharp
 // Before: reads as our product id; it is not, and a bulk rename duly turned it into ProductID
 public record UntappdDetails(int BeverageID, ...)
 
-// After: whose id, and what it points at. Not `BeerID` — Untappd still says "beer" in its URLs,
-// but its catalogue now covers cider, mead and spirits.
+// After: whose id, and what it points at
 public record UntappdDetails(int UntappdBeverageID, ...)
 ```
 
@@ -402,12 +287,6 @@ private enum ReadOutcome { NothingRead, Written, LinkDropped }
 // After: what the service actually said. Dropping the link is what one caller then does.
 private enum ReadOutcome { NothingRead, Written, TokenRejected }
 ```
-
-### Name an action type for the verb it performs
-
-An action that wraps or decorates another still names an action, so it takes the imperative form its
-siblings use — `Hold(Tap(id))`, alongside `Tap`, `TypeText`, `DismissAlert`. A participle like
-`Held` describes the state the subject ends in rather than what the step does.
 
 ## Renaming
 
@@ -428,22 +307,6 @@ public abstract record CosmosDBDocument(...)
 {
     public string PartitionKey => GetType().Name;
 }
-```
-
-### A rename can change what a read-modify-write loop writes to
-
-When the renamed name selects a destination, a loop that used to read and write the same place
-becomes a copy between two places. Code written for the in-place version is then subtly wrong in
-ways the diff doesn't show — most often a missing delete, because deleting the source would have
-destroyed the very record it just wrote. Re-read every loop that both reads and writes the renamed
-thing.
-
-```csharp
-// Before the rename this upserted a Beverage back into the Beverage partition — an in-place
-// upgrade, where deleting the source would have been wrong. After it, the upsert lands in the
-// Product partition and the source has to be deleted, or the next step re-reads and clobbers it.
-_ = await Database.UpsertItemAsync(product);
-await Database.DeleteItemAsync((string)old["id"]!, "Beverage");
 ```
 
 ## Style
@@ -468,15 +331,8 @@ say what's being rejected explains itself, and narrating the consequence of _not
 rationale that belongs in the commit, not the code (see "Keep rationale in the commit").
 
 ```csharp
-// Before — a paragraph explaining a guard that already speaks for itself
-// A negative quantity would survive the clamp below (it is the minimum), inflating stock
-// via a positive beverage delta and storing a negative order entry. Reject it outright.
-if (quantity < 0)
-{
-    throw new DatabaseException(HttpStatusCode.BadRequest, "Quantity cannot be negative");
-}
-
-// After — the condition and message are the whole story
+// The condition and the message are the whole story — the paragraph that stood above this
+// explaining what a negative quantity would do downstream said nothing the line doesn't.
 if (quantity < 0)
 {
     throw new DatabaseException(HttpStatusCode.BadRequest, "Quantity cannot be negative");
@@ -485,16 +341,15 @@ if (quantity < 0)
 
 ### Ask whether a reader who never saw the diff would be confused
 
-The rules in this section are easy to agree with and still walk past, because at write time the
-thought is never "I am rationalizing" — it's "this is subtle, let me explain". They only fire if you
-ask a question you can answer while writing: would someone opening this file cold, not knowing what
-the code used to be, be confused without this? If the comment only lands for a reader comparing
-before and after, it's written for the reviewer — commit message, not source.
+These rules are easy to agree with and still walk past, because at write time the thought is never
+"I am rationalizing" — it's "this is subtle, let me explain". They only fire if you ask a question
+you can answer while writing: would someone opening this file cold, not knowing what the code used
+to be, be confused without this? If the comment only lands for a reader comparing before and after,
+it's written for the reviewer — commit message, not source.
 
 The tell is where the comments sit. Clustering on the lines you expect to be _questioned_ rather
 than the lines that are hard to _read_ means you're defending the change, not documenting the code.
-Those two overlap; they are not the same set. Recognisable shapes, each a restatement of one of the
-rules around it:
+Recognisable shapes:
 
 - `rather than`, `instead of`, `the old`, `used to` — a rejected alternative, or history
 - a sentence that paraphrases the statement directly beneath it — restatement
@@ -516,10 +371,9 @@ the code instead of the comment.
 // Before — "legacy customers" cannot exist in a service that hasn't launched
 // ...falling back to the most recently added card if no default is set (legacy customers).
 
-// After — the cause that can actually happen
-// ...falling back to the most recently added card if no default is set — possible when card setup
-// succeeded on Stripe's side (card attached) but the completion handler that records the default
-// never ran, e.g. the customer closed the browser before returning to the success URL.
+// After — a cause that can actually happen
+// ...falling back to the most recently added card if no default is set — possible when the card
+// attached on Stripe's side but the handler that records the default never ran.
 ```
 
 ### Don't comment on what used to be there
@@ -538,9 +392,7 @@ PR.
 ```js
 // Before — names the rejected alternative and walks the dependency's internals
 // ...preserving config that `nbgv set-version` would strip. Then stage it ourselves:
-// @semantic-release/git runs from this cwd and builds its list with `git ls-files`,
-// which never reaches ../../version.json...
-prepareCmd: 'node scripts/bump-version-json.mjs ${v} && git add ../../version.json',
+// @semantic-release/git runs from this cwd and builds its list with `git ls-files`...
 
 // After — only the coupling this line can't show on its own
 // Bump version.json (repo root) and stage it for the release commit below.
@@ -576,20 +428,6 @@ pnpm install
 pnpm install --frozen-lockfile
 ```
 
-### Taking over a single-slot extension point disables whoever already held it
-
-Config that redirects a tool's plugin or hook location usually replaces rather than augments, so
-anything a previous `install` step put in the default location silently stops running. Before
-claiming the slot, enumerate what is already in it and forward each one explicitly — and write down
-the list, because the incumbent will add to it on its next upgrade. The failure is silent by
-construction: everything still exits 0, and what broke is the work that no longer happens.
-
-```bash
-# core.hooksPath moves git off .git/hooks, where `git lfs install` wrote four hooks.
-# Without an explicit forward, LFS stops smudging pointers and stops uploading on push.
-git lfs "$hook" "$@"
-```
-
 ### A gate that only runs in CI will first fail in CI
 
 If a check is worth blocking a merge on, wire it into a command developers already run so it fails
@@ -598,9 +436,8 @@ thing that just failed. Prefer attaching it to an existing verb over inventing a
 the fast iteration paths unattached so the inner loop stays quick.
 
 ```jsonc
-// `pnpm test` now enforces exactly what CI enforces; test:watch / test:nocoverage deliberately
-// don't, so a red lint can't block iterating on a failing test.
-"check": "pnpm run lint && pnpm run knip",
+// `pnpm test` now enforces exactly what CI enforces; test:watch deliberately doesn't,
+// so a red lint can't block iterating on a failing test.
 "pretest": "pnpm run check",
 ```
 
@@ -633,36 +470,19 @@ foreach (var procedure in Enum.GetValues<StoredProcedure>())
 A public method taking arbitrary strings is a door anyone can walk through with anything. Take a
 value from a known set instead, and make the string-taking version private.
 
-### Put mapping logic in the class that owns the thing being mapped
+### Put mapping and canonicalization in the type that owns the value, not in a helper at call sites
 
-Not in the caller, and not in a satellite helper.
-
-```csharp
-// Before: a satellite helper formats the payment method
-public static class CardDisplay
-{
-    public static string? ForCard(RegisteredPaymentMethod pm) => ...;
-}
-
-// After: the type that holds the data formats itself
-public record StripeAccountInfo(string CustomerID, string? Brand, string? Last4)
-{
-    public string Describe() => ...;
-}
-```
-
-### Canonicalize a value in the type that owns it, not in a helper at call sites
-
-A normalization helper only fixes the call sites someone remembered to apply it to; every comparison
-site it misses is a silent mismatch. Putting the canonicalization on the owning property covers
-every consumer at once. (Moving email trim+lowercase from an `AccountManager.NormalizeEmail` helper
-into `AccountCredentials.EmailAddress` fixed two lookup paths the helper-based fix had missed.)
+Not in the caller, and not in a satellite helper. A helper only covers the call sites someone
+remembered to apply it to, and every site it misses is a silent mismatch — where putting the
+behaviour on the owning property covers every consumer at once.
 
 ```csharp
-// Before: applied in one manager method; other comparisons of EmailAddress stayed raw
+// Before: a satellite formatter, and a normalizer applied in one manager method
+public static string? ForCard(RegisteredPaymentMethod pm) => ...;
 public static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 
-// After: every consumer reads the canonical form
+// After: the type that holds the data formats and canonicalizes itself
+public string Describe() => ...;
 public string EmailAddress => ID?.Trim().ToLowerInvariant()!;
 ```
 
@@ -689,8 +509,7 @@ layer down, the guard is not worth its weight.
 
 When the server has already applied a change out of band, read the updated state back rather than
 sending an update that sets it to what it already is. The redundant write is a wasted round trip and
-a second chance to fail. (After the card-setup return switched the account server-side, the app was
-calling UpdateAccount to set the same thing; a refresh replaced it.)
+a second chance to fail.
 
 ### Use the single-match operation when only one element can match
 
@@ -699,21 +518,11 @@ and the reverse iteration it then needs to delete safely sends the reader lookin
 multiple-match scenario. Find the one element and act on it.
 
 ```csharp
-// Before: reverse loop so RemoveAt stays safe mid-iteration — but a second match cannot exist,
-// because a duplicate JSON name makes building the contract throw
-for (var i = typeInfo.Properties.Count - 1; i >= 0; i--)
-{
-    if (typeInfo.Properties[i].Name == nameof(CosmosDBDocument.PartitionKey))
-    {
-        typeInfo.Properties.RemoveAt(i);
-    }
-}
+// Before: a reverse loop so RemoveAt stays safe mid-iteration, for a second match that cannot exist
+for (var i = properties.Count - 1; i >= 0; i--) { if (...) { properties.RemoveAt(i); } }
 
 // After
-if (typeInfo.Properties.FirstOrDefault(p => p.Name == nameof(CosmosDBDocument.PartitionKey)) is { } partitionKey)
-{
-    _ = typeInfo.Properties.Remove(partitionKey);
-}
+if (properties.FirstOrDefault(p => ...) is { } partitionKey) { _ = properties.Remove(partitionKey); }
 ```
 
 ### Don't defend against a failure the codebase ignores elsewhere
@@ -728,8 +537,7 @@ the warning. A documented hazard still catches people, and the document rots ind
 thing it describes.
 
 ```
-Four test projects, three different AssemblyName patterns; two resolved
-differently in Debug and Release.
+Four test projects, three AssemblyName patterns, two resolving differently in Debug and Release.
 
 Documenting it:  "watch out — the assembly name changes per configuration"
 Removing it:     delete the overrides; all four resolve to the project name
@@ -753,29 +561,10 @@ isn't a reason: the interface is already that seam.
 
 ```csharp
 // Before: a protected member whose whole job is to rename the store's Token
-protected string? ClientToken
-{
-    get => _tokenStore.Token;
-    set => _tokenStore.Token = value;
-}
+protected string? ClientToken { get => _tokenStore.Token; set => _tokenStore.Token = value; }
 
 // After: the field carries the name, and the 8 call sites read _clientTokenStore.Token
 private readonly ISecureTokenStore _clientTokenStore = clientTokenStore;
-```
-
-### Don't mark a type for codegen export when nothing downstream consumes it
-
-An opt-in export annotation is a claim that a consumer needs the type, so adding it by reflex emits
-generated files nobody imports. It also pulls in every type the exported one references, so a single
-unnecessary annotation can produce several dead artifacts. Check what the consumer actually imports;
-in a codebase where the annotation is opt-in, the unannotated types are the convention, not an
-oversight.
-
-```csharp
-// The webapp imports none of these, and annotating PostalCodeEntry also emitted a Prefecture.ts
-// that nothing references.
-[ExportTsInterface]
-public record PostalCodeEntry(string PostalCode, Prefecture Prefecture, string City, string Town);
 ```
 
 ### Don't write migration code for a state the product has never been in
@@ -791,16 +580,6 @@ not the argument — evidence that something can read back in that shape is. Nul
 are separate decisions: the first says the value can be missing, the second says the whole key can
 be. Ask which writers exist before granting either.
 
-```csharp
-// Contract: stored documents genuinely omit the property — RefreshUntappdRatingsAsync selects for
-// exactly that with IS_DEFINED — so the parameter needs the default too.
-UntappdDetails? UntappdDetails = null,
-
-// App model: the cache is written by the same build with DefaultIgnoreCondition.Never, so the key
-// is always present. Nullable, no default.
-UntappdDetails? UntappdDetails,
-```
-
 ### Satisfying the type-checker must not cost a name or add a variable
 
 When a value turns nullable, add the check where the value is used. Restructuring so flow analysis
@@ -810,10 +589,6 @@ understanding, which is the wrong trade. The tempting restructure exists because
 carry the non-null fact to a dereference further down; a check at the dereference costs less.
 
 ```csharp
-// Before
-var showGlobalRating = setting.HasFlag(GlobalRating) || (untappd.PersonalRating == 0 && ...);
-showGlobalRating ? RenderStarRating(..., untappd.GlobalRating, ...) : null
-
 // Rejected: renamed, and a third local, so the compiler could see through to the dereference
 var globalRatingSource = untappd is not null && (...) ? untappd : null;
 globalRatingSource is not null ? RenderStarRating(..., globalRatingSource.GlobalRating, ...) : null
@@ -843,12 +618,6 @@ too low it throttles throughput with no signal. Prefer the loud failure — it n
 suggests the fix — over a silent ceiling nobody will revisit. This only holds when overrunning is
 safe: check that partial progress is durable and that the next run resumes where this one stopped.
 
-```
-A 50-account cap on an hourly refresh was removed. Each account's results are written as it
-finishes and the queue is ordered by staleness, so a run killed by the function timeout keeps its
-work and the tail arrives next run — and a timeout is visible, where a too-low cap is not.
-```
-
 ## Validation
 
 ### Reject a shape that has no correct use, rather than leaving it legal and documenting it
@@ -858,20 +627,14 @@ put the fix in the message. Documentation is opt-in and a comment is easy to mis
 whoever writes the mistake, at the moment they write it.
 
 ```csharp
-// A tree leaf with no steps of its own re-ran the path its siblings already covered, asserted
-// nothing they didn't, and produced no screenshot — a whole test execution per fixture for nothing.
-public sealed class Leaf(JourneyStep[] steps, [CallerMemberName] string name = "")
-    : TreeNode(
-        name,
-        steps.Length > 0
-            ? steps
-            : throw new ArgumentException(
-                $"Leaf '{name}' has no steps of its own, so it duplicates the path its siblings "
-                    + "already run. Give it steps, or move its expectations into the shared "
-                    + "branch step and remove the leaf.",
-                nameof(steps)
-            )
-    );
+// The message carries the fix, so it reaches whoever writes the mistake
+steps.Length > 0
+    ? steps
+    : throw new ArgumentException(
+        $"Leaf '{name}' has no steps of its own, so it duplicates the path its siblings already "
+            + "run. Give it steps, or move its expectations into the shared branch step.",
+        nameof(steps)
+    )
 ```
 
 ### Enforce a server-owned invariant at the server, not in the client's type system
@@ -883,7 +646,7 @@ less than the workaround it replaces.
 
 ```ts
 // Before: a webapp-only type existed solely to keep a blank id out of the payload
-type SettingsDocument = Pick<API.Settings, '_etag'> & SettingsFormData;
+type SettingsDocument = Pick<API.Settings, "_etag"> & SettingsFormData;
 
 // After: state is the generated type again, because the service now owns the id
 const [settings, setSettings] = useState<API.Settings | undefined>(undefined);
@@ -914,7 +677,7 @@ cause in the message.
 
 ```xml
 <!-- Stamping an empty versionCode succeeded here, then failed ~40s later in the Android resource
-     compiler with three APT2140 errors all blaming AndroidManifest.xml -->
+     compiler with three errors all blaming AndroidManifest.xml -->
 <Error
   Condition="'$(BuildVersion)' == ''"
   Text="Nerdbank.GitVersioning produced no version, so android:versionCode would be stamped empty.
@@ -930,22 +693,6 @@ consistent with the existing reference-exists and no-overlap checks there). Whet
 is non-empty or well-formed depends only on itself, and stays in the form's validation. Don't read
 the absence of server-side field checks as a reason to drop the cross-record ones.
 
-### Let the version token decide which error a mismatched write reports
-
-An optimistic-concurrency token proves the caller's copy was current; it says nothing about _what_
-the caller changed, so it can never stand in for an invariant check. It does tell you which error is
-honest when both could explain the same mismatch: on a stale copy the mismatch is a lost-update race
-and belongs to the conflict the store will raise anyway, while the same mismatch on a current copy
-is the caller writing a field it doesn't own. Gate the invariant's rejection on the token matching,
-and let the stale case fall through.
-
-```csharp
-// A stale copy falls through to ReplaceItemAsync's 412; only a current copy earns the 400
-return product.Quantity != existingProduct.Quantity && product.ETag == existingProduct.ETag
-    ? throw new ArgumentException("A product edit cannot change Quantity…", nameof(product))
-    : await Database.ReplaceItemAsync(product, product.ID, product.ETag);
-```
-
 ### Validate an untrusted path against the resolved full path, not its segments
 
 When a filesystem path is built from untrusted input — URL segments, request fields — reject it by
@@ -953,9 +700,8 @@ resolving the whole candidate and checking containment (`Path.GetFullPath(candid
 `Path.GetFullPath(root) + separator`), not by scanning the raw or unescaped segments for `..`. A
 per-segment `..` check reads as sufficient but isn't: a percent-encoded slash (`..%2f..`) decodes
 into a single segment _after_ the URL is split, and a leading `%2f` decodes to an absolute segment
-that `Path.Combine` honours outright — both slip past a whole-segment comparison. Put the guard
-where the path is finally resolved (the read and the delete), and keep it even for a localhost-only
-tool: a page the user visits can drive it cross-origin.
+that `Path.Combine` honours outright. Put the guard where the path is finally resolved, and keep it
+even for a localhost-only tool: a page the user visits can drive it cross-origin.
 
 ## Tests
 
@@ -988,13 +734,15 @@ Step(Wait(2000), [Found(Id.WaitForVerification.Cancel), NotFound(Id.Offer.Bevera
 
 A fake that returns immediately runs "concurrent" calls one at a time, so each completes before the
 next begins and any short-circuit guard hides the overlap the test exists to cover. The test then
-passes with the fix removed. Induce latency in the fake so the calls are genuinely in flight
-together, then confirm it goes red without the fix.
+passes with the fix removed. Require the overlap rather than sampling it — have each caller wait
+until N are in flight together, which is deterministic and fails rather than hangs when the code
+turns out to be sequential. Sampling a high-water mark instead is a non-atomic read-modify-write, so
+the thread that observed the peak can be overwritten by one that observed less.
 
 ```csharp
-// Without this the three calls complete serially and evictedCount is 1 either way
-manager.MockServiceConnector.ArtificialLatencyMillis = 50;
-Task.WaitAll(a, b, c);   // now fails with "found 3" when the latch is removed
+// Completes only on genuine overlap; sequential code leaves each caller waiting out the timeout
+if (Interlocked.Increment(ref inFlight) == count) { _ = allInFlight.TrySetResult(); }
+_ = await Task.WhenAny(allInFlight.Task, Task.Delay(TimeSpan.FromSeconds(2)));
 ```
 
 ### A test asserts its marginal behavior, not a copy of another test's expectations
@@ -1005,30 +753,12 @@ exact-match setup adds a second copy that must be edited in lockstep while verif
 first test doesn't already cover — and a test whose only marginal assertion is default behavior
 (e.g. an exception propagating through code with no try/catch) may not be worth keeping at all.
 
-### A snapshot suite's filenames passing says nothing about its contents
+### A structural check over a snapshot suite says nothing about its contents
 
-Golden-file tooling usually offers a cheap structural check — every stored file matches an expected
-path — and it is easy to read a clean result as "the baselines are fine". It only proves the names
-line up. Any change to what is rendered invalidates the pixels while leaving every path intact, so
-the check stays green and the suite fails on the next real run.
-
-The trap is that the rendering change need not look like one. A rename that touches only identifiers
-is safe; the same commit editing one user-visible string is not, and nothing in a compiler, a unit
-test, or the path check distinguishes them. Open a baseline and look at it.
-
-### A sampled high-water mark is not a concurrency assertion
-
-`mark = Math.Max(mark, Interlocked.Increment(ref n))` is a non-atomic read-modify-write: the thread
-that observed the peak can be overwritten by one that observed less, so the test fails at random.
-Require the overlap instead of sampling it — have each caller wait until N are in flight together.
-That is deterministic, and it fails rather than hangs when the code turns out to be sequential.
-
-```csharp
-// Completes only on genuine overlap; sequential code leaves each caller waiting out the timeout
-if (Interlocked.Increment(ref inFlight) == count) { _ = allInFlight.TrySetResult(); }
-_ = await Task.WhenAny(allInFlight.Task, Task.Delay(TimeSpan.FromSeconds(2)));
-_ = Interlocked.Decrement(ref inFlight);
-```
+Golden-file tooling offers a cheap check that every stored file matches an expected path, and a
+clean result reads as "the baselines are fine". It only proves the names line up — any change to
+what is rendered invalidates the pixels while leaving every path intact. Open a baseline and look at
+it.
 
 ## Evidence
 
@@ -1052,10 +782,9 @@ break an assumption you didn't know you'd made — and finding those costs one t
 what it finds into fixtures, so the regression is pinned without the corpus.
 
 ```
-Downloading Japan Post's 124,513-row file and running the importer over it found two defects
-that every hand-written fixture had passed: rows that collapsed to duplicates once a
-parenthesised note was stripped, and 134 codes spanning more than one city, which made a
-picker label render blank.
+Running the importer over Japan Post's real 124,513-row file found two defects every hand-written
+fixture had passed: rows that collapsed to duplicates once a parenthesised note was stripped, and
+codes spanning more than one city, which made a picker label render blank.
 ```
 
 ### A tool accepting a flag is not evidence that the flag does anything

@@ -47,28 +47,12 @@ varies — different-sized rows, an optional panel, a wider selected item — th
 somewhere else. Make the varying pieces a uniform size, or pin to a specific element's on-screen
 position, instead of trusting the raw offset.
 
-## Visual design
-
-### Don't separate two numbers with a pipe glyph — it reads as a digit
-
-`5 | 15` in a compact badge parses as "5 1 15": the `|` sits right against the digits and looks like a
-`1`. Split the two values into distinct panes divided by a real full-height line (like a segmented
-control), and shade them differently when they mean different things.
-
 ## Accessibility
 
 ### Make interactive elements accessible
 
 An interactive element needs `tabindex="0"`, an `aria-label`, and a keyboard handler alongside its
 click handler — not just the mouse path.
-
-## DOM events
-
-### Take pointer capture only once a drag starts, not on `pointerdown`
-
-`setPointerCapture` on `pointerdown` retargets the follow-up `click` to the capturing element, so a
-plain click never reaches the child under the cursor. Capture in `pointermove`, once movement passes
-the drag threshold — a click then stays on its target while a drag still tracks off-element.
 
 ## Hooks
 
@@ -115,9 +99,8 @@ expect(service.GetUsers).toHaveBeenCalledWith(
 ### A green test run and a green lint do not mean the types check
 
 Vitest transpiles rather than type-checks, and ESLint's type-aware rules cover far less than the
-compiler. A change can therefore break the build while the whole suite and the linter stay green —
-in one case three `TS2345`/`TS2561` errors survived 786 passing tests and a clean lint. Run
-`tsc --noEmit` (or the production build) before believing a refactor landed.
+compiler. A change can therefore break the build while the whole suite and the linter stay green.
+Run `tsc --noEmit` (or the production build) before believing a refactor landed.
 
 ### Verify pointer interactions with real pointer events, not `element.click()`
 
