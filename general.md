@@ -10,11 +10,6 @@ files are organised and maintained.
 Optimise for the person reading the code next. Reach for a faster-but-harder-to-follow version only
 when there's a measured reason to.
 
-### Don't repeat yourself
-
-A fact should be stated in one place. Duplication is a maintenance liability before it's anything
-else, because the copies drift.
-
 ### A wire enum a not-yet-updated client reads must tolerate unknown values
 
 A client deserializing a whole response throws the entire payload away on an enum value it doesn't
@@ -74,23 +69,19 @@ drift the moment a paste is missed.
 When an optional text field has no meaningful distinction between "null" and "empty", use a
 non-nullable string with `""` as "no value". Nullability infects every consumer (null guards in
 queries, optional types in generated contracts, `?? ''` mapping in forms) while buying nothing.
-(Settled on Beverage.SKU/SupplierID, matching the existing ImageUrl convention.)
 
 ### Avoid variables and helpers that are used only once
 
 Inline the expression unless naming it genuinely aids reading or improves the formatting. This
-covers small helper functions too: a one-call-site helper whose "why" is already carried by a
-comment at the call site is pure indirection.
+covers small helper functions — a one-call-site helper whose "why" is already carried by a comment
+at the call site is pure indirection — and properties that exist only to wrap a lazy-initialization
+branch for their single reader: put the branch in the reader. It covers whole types as well: a class
+with exactly one consumer usually belongs inside that consumer, as a private member.
 
 ### Reuse common UX components rather than styling each page
 
 Identify the fundamental components and give them consistent styles. Define a unique style only when
 the UX is genuinely unique — otherwise every page becomes its own small design system.
-
-### Avoid hardcoded values, especially duplicated ones
-
-Two literals that are the same value are one constant waiting to be extracted. Define the constant
-and use it.
 
 ### Keep only genuinely-mutable values in component state
 
@@ -110,18 +101,18 @@ render at once, they drift apart, and a reader has to hold two things where one 
 /* Before: the failing edge owned the outline, so the neutral edge arrived as a box-shadow —
    and a failing box drew both, one just outside the other */
 .node {
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 .node.has-fail {
-  outline: 2px solid var(--fail);
+	outline: 2px solid var(--fail);
 }
 
 /* After: one outline, recoloured per state */
 .node {
-  outline: 1px solid rgba(255, 255, 255, 0.16);
+	outline: 1px solid rgba(255, 255, 255, 0.16);
 }
 .node.has-fail {
-  outline: 2px solid var(--fail);
+	outline: 2px solid var(--fail);
 }
 ```
 
@@ -167,18 +158,12 @@ Task<OrderViewWithAccount> ReconcileOrderPaymentAsync(string id)       ->
 Task<OrderViewWithAccount> ReconcileOrderPaymentAsync(string orderID)
 ```
 
-### Name both sides of a contrast, so neither name is the default
-
-When a second API arrives that differs from an existing one along one axis, rename the original to
-name that axis too. Leaving the first as the bare name implies it is the general case and the
-newcomer a variant, and a reader choosing between them has nothing to go on but a guess.
-
 ```ts
 // Before: the suffix says "value" but not how it differs, so the pair reads as general + special case
 useDebounce; // owns the state
 useDebouncedValue; // mirrors a value owned elsewhere
 
-// After: both names carry the axis — who owns the value
+// After: both names carry the axis — who owns the value — in the same shape
 useDebouncedState;
 useDebouncedValue;
 ```
@@ -192,6 +177,16 @@ separate `Assert*` do the enforcing.
 ```csharp
 VerifyCredentials  ->  ResolveAccountID   // returns an account ID, or null
                        AssertCredentials  // throws when the caller doesn't own the account
+```
+
+### Name a method for what it does, not for the call it sets up
+
+A `Prime*`/`Warm*`/`Prepare*` name describes the method's usefulness to a later caller, so it says
+nothing about what running it actually does, and reads as ceremony. Name the work — what it
+captures, writes, or computes — and let the doc comment carry any ordering rule.
+
+```csharp
+PrimeNotificationBannerReference()  ->  CaptureEmptyBannerRegion()
 ```
 
 ### Name a default enum member for the condition it represents, not as a placeholder
@@ -257,6 +252,20 @@ assemblies, the two settings sources are `AppSettings` and `ServiceSettings`, no
 AppSettings      // local device preferences
 ServiceSettings  // from the service — a property of type PublicSettings, and named for provenance
                  // rather than echoing the type, which would lose the contrast with AppSettings
+```
+
+### Suffix a delegate parameter with `Provider`, not the name of what it returns
+
+A parameter that supplies a value on demand is named for being a supplier, so the call site reads as
+deferred rather than as a value already in hand. Naming it after the value it produces makes the
+member look like the value itself.
+
+```csharp
+// Before
+public sealed record TriggerNotification(Func<TestDriver, string> Json)
+
+// After
+public sealed record TriggerNotification(Func<TestDriver, string> JsonProvider)
 ```
 
 ### Name a mirrored third-party identifier for what it identifies, in their namespace not yours
@@ -328,7 +337,8 @@ Comment when the code is genuinely tricky or unintuitive, or when the codebase r
 documentation. Don't restate what the next line does — clear names and structure do that job better.
 A self-evident guard needs no comment above it: an `if` whose condition and thrown message already
 say what's being rejected explains itself, and narrating the consequence of _not_ guarding is
-rationale that belongs in the commit, not the code (see "Keep rationale in the commit").
+rationale that belongs in the commit, not the code (see "Ask what breaks if the reader ignores the
+comment").
 
 ```csharp
 // The condition and the message are the whole story — the paragraph that stood above this
@@ -339,26 +349,39 @@ if (quantity < 0)
 }
 ```
 
-### Ask whether a reader who never saw the diff would be confused
+### Ask what breaks if the reader ignores the comment
 
 These rules are easy to agree with and still walk past, because at write time the thought is never
-"I am rationalizing" — it's "this is subtle, let me explain". They only fire if you ask a question
-you can answer while writing: would someone opening this file cold, not knowing what the code used
-to be, be confused without this? If the comment only lands for a reader comparing before and after,
-it's written for the reviewer — commit message, not source.
+"I am rationalizing" — it's "this is subtle, let me explain". "Would a reader be confused without
+this?" is too weak to catch it: the answer is always yes, since they would wonder why. Ask instead
+what _breaks_ if they ignore the line. If the answer is "nothing, they would only wonder why we
+chose this", it is commit material — the "why not the other way" goes in the commit or PR, and the
+comment keeps only the local intent the line cannot state itself.
 
 The tell is where the comments sit. Clustering on the lines you expect to be _questioned_ rather
 than the lines that are hard to _read_ means you're defending the change, not documenting the code.
 Recognisable shapes:
 
 - `rather than`, `instead of`, `the old`, `used to` — a rejected alternative, or history
+- defining the shape by negation — what was removed, what this replaces, what it does _not_ cover
 - a sentence that paraphrases the statement directly beneath it — restatement
 - a comment describing another file's or layer's behaviour — that layer's contract, not this one's
+- an issue or PR number — the reader will not go and read it, and it rots the moment it closes
 - `irreversible`, `one-way`, `cannot be undone` — a warning aimed at whoever _approves_ the change,
   not at whoever reads the file later; by then the one-way step is long taken
 
 Judge them as a set rather than one at a time. Each is individually defensible; that is how a diff
 ends up carrying fourteen of them.
+
+```xml
+<!-- Before: defines the choice by what it isn't, and explains a scheme no longer in use -->
+<!-- The commit count rather than nbgv's git height, because the height restarts at 1 every time
+     version.json changes, and Play requires a versionCode that never decreases. -->
+
+<!-- After -->
+<!-- The commit count on HEAD, which only ever grows — Play requires a versionCode that never
+     decreases. -->
+```
 
 ### A comment's stated reason must be a scenario that can actually occur
 
@@ -374,29 +397,6 @@ the code instead of the comment.
 // After — a cause that can actually happen
 // ...falling back to the most recently added card if no default is set — possible when the card
 // attached on Stripe's side but the handler that records the default never ran.
-```
-
-### Don't comment on what used to be there
-
-A comment explaining what was removed, what this replaces, or what is no longer needed is written
-for the reviewer, not the next reader. It's noise the moment the change merges.
-
-### Keep rationale in the commit, not the comment
-
-Why an approach was chosen over an alternative, or how a dependency's internals force the current
-shape, is not "what the code can't say" — it's context for whoever reviews the change. It outlives
-the context that justified it and rots in place, and it drags in names of things the code no longer
-references. State the local intent the line can't; put the "why not the other way" in the commit or
-PR.
-
-```js
-// Before — names the rejected alternative and walks the dependency's internals
-// ...preserving config that `nbgv set-version` would strip. Then stage it ourselves:
-// @semantic-release/git runs from this cwd and builds its list with `git ls-files`...
-
-// After — only the coupling this line can't show on its own
-// Bump version.json (repo root) and stage it for the release commit below.
-prepareCmd: 'node scripts/bump-version-json.mjs ${v} && git add ../../version.json',
 ```
 
 ### Qualify a term that collides with a more common developer meaning
@@ -484,18 +484,6 @@ public static string NormalizeEmail(string email) => email.Trim().ToLowerInvaria
 // After: the type that holds the data formats and canonicalizes itself
 public string Describe() => ...;
 public string EmailAddress => ID?.Trim().ToLowerInvariant()!;
-```
-
-### Don't expose an identifier every caller converts anyway
-
-If each call site converts the identifier to the thing on the same line, the identifier is ceremony.
-
-```csharp
-// Before: all 8 call sites read GetTemplate(DefinedTemplates.X)
-public const string WelcomeEmail = "WelcomeEmail.html";
-
-// After: the caller asks for a template and gets a template
-public static string WelcomeEmail => Read("WelcomeEmail.html");
 ```
 
 ## Simplicity
@@ -600,10 +588,11 @@ untappd is not null && showGlobalRating ? RenderStarRating(..., untappd.GlobalRa
 
 ### Don't hand-roll a guarantee the platform already makes
 
-Check the platform's documented behaviour before building mutual exclusion, retry, or overlap
-detection. Beyond being redundant, a hand-rolled version is usually _worse_: the platform's is a
-lease that expires, while a flag in your own store is a poison pill — a run killed mid-flight leaves
-it set and silently blocks every later run.
+Check the platform's documented behaviour before building mutual exclusion, retry, overlap
+detection, or a pre-check for a condition the write itself would report. Beyond being redundant, a
+hand-rolled version is usually _worse_: the platform's is a lease that expires, while a flag in your
+own store is a poison pill — a run killed mid-flight leaves it set and silently blocks every later
+run. A pre-check is also racy where the platform's own answer is not.
 
 ```
 Azure Functions timer triggers, verbatim: "only a single instance of a timer-triggered function is
@@ -617,6 +606,11 @@ A guessed cap cannot reliably prevent the failure it was added for: set too high
 too low it throttles throughput with no signal. Prefer the loud failure — it names the problem and
 suggests the fix — over a silent ceiling nobody will revisit. This only holds when overrunning is
 safe: check that partial progress is durable and that the next run resumes where this one stopped.
+
+When overrunning is not safe, the answer is still not a guessed cap: measure the real constraint at
+runtime rather than a proxy for it — an elapsed-time budget adjusts itself as the work speeds up or
+slows down, where a count of items bakes in today's throughput. If a number is unavoidable, declare
+it once somewhere every reader takes it from, rather than inferring a platform default in code.
 
 ## Validation
 
@@ -646,7 +640,7 @@ less than the workaround it replaces.
 
 ```ts
 // Before: a webapp-only type existed solely to keep a blank id out of the payload
-type SettingsDocument = Pick<API.Settings, "_etag"> & SettingsFormData;
+type SettingsDocument = Pick<API.Settings, '_etag'> & SettingsFormData;
 
 // After: state is the generated type again, because the service now owns the id
 const [settings, setSettings] = useState<API.Settings | undefined>(undefined);
@@ -676,13 +670,24 @@ the wrong file. Guard at the point of production, where the cause is still in ha
 cause in the message.
 
 ```xml
-<!-- Stamping an empty versionCode succeeded here, then failed ~40s later in the Android resource
-     compiler with three errors all blaming AndroidManifest.xml -->
 <Error
   Condition="'$(BuildVersion)' == ''"
-  Text="Nerdbank.GitVersioning produced no version, so android:versionCode would be stamped empty.
-        This is usually an in-progress merge or rebase — finish or abort it, then rebuild."
+  Text="Nerdbank.GitVersioning produced no version, so android:versionCode would be stamped empty."
 />
+```
+
+### A check that could not run is a failure, not a pass
+
+When the input a check needs is unavailable — a permission not granted, a binary absent from the
+platform, a fetch that returned null — reporting "nothing wrong" makes an unrun check
+indistinguishable from a clean one, and the run goes green having verified nothing. Give the
+unavailable case an outcome of its own, and let the strict or CI path treat it as failing.
+
+```ts
+// Before: a failed read makes every comparison it feeds pass silently
+if (hub === null) {
+	return [];
+}
 ```
 
 ### The server validates cross-record constraints; the form validates field content
@@ -780,12 +785,6 @@ Fixtures encode the cases you already thought of, so they confirm the parser rat
 The real file carries the distribution — the placeholder rows, the near-duplicates, the records that
 break an assumption you didn't know you'd made — and finding those costs one throwaway run. Turn
 what it finds into fixtures, so the regression is pinned without the corpus.
-
-```
-Running the importer over Japan Post's real 124,513-row file found two defects every hand-written
-fixture had passed: rows that collapsed to duplicates once a parenthesised note was stripped, and
-codes spanning more than one city, which made a picker label render blank.
-```
 
 ### A tool accepting a flag is not evidence that the flag does anything
 

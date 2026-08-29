@@ -138,8 +138,8 @@ public partial class PostalCodeManager(..., IHttpClient HttpClient)
     ... await HttpClient.GetByteArrayAsync(DownloadUrl);
 ```
 
-The field is still warranted when it adds something the parameter can't: a different type, a computed
-value, or an initialiser the parameter doesn't carry.
+The field is still warranted when it adds something the parameter can't: a different type, a
+computed value, or an initialiser the parameter doesn't carry.
 
 ### Use PascalCase for public members, camelCase for private fields
 
@@ -179,9 +179,10 @@ wrapping it costs two lines to save none.
 
 ### Wrap an `#if` around the varying fragment, not around two copies of the expression
 
-When only part of an expression is conditional, put the directive inside it — even mid-argument-list.
-An `#if`/`#else` holding two near-identical copies makes the reader diff them to find the difference,
-and every later edit has to be made twice. csharpier leaves the inline form alone.
+When only part of an expression is conditional, put the directive inside it — even
+mid-argument-list. An `#if`/`#else` holding two near-identical copies makes the reader diff them to
+find the difference, and every later edit has to be made twice. csharpier leaves the inline form
+alone.
 
 ```csharp
 // Before: two copies, one differing argument
@@ -201,11 +202,10 @@ and every later edit has to be made twice. csharpier leaves the inline form alon
 
 ## Functions
 
-### Avoid private functions with a single call site
+### Prefer a local function for a helper only one function uses
 
-Inline them unless naming genuinely aids reading. Also consider defining the function within another
-function when it is only used there; this prevents it from showing up in intellisense in outside
-contexts.
+Defining it inside its caller puts it where its only reader is and keeps it out of intellisense in
+outside contexts.
 
 ### Have an `Ensure*` validation helper return its subject
 
@@ -394,8 +394,8 @@ Enum.TryParse<T>(name, ignoreCase: true, out var value) && Enum.IsDefined(value)
 
 ### A nullable wire member is optional only once it also carries a default
 
-Under `RespectRequiredConstructorParameters`, a constructor parameter is optional exactly when it has
-a default value — nullability has nothing to do with it. That matters because the codegen on the
+Under `RespectRequiredConstructorParameters`, a constructor parameter is optional exactly when it
+has a default value — nullability has nothing to do with it. That matters because the codegen on the
 other side usually reads optionality off the nullability alone: TypeGen exports `DateTime? From` as
 `From?`, the client legitimately sends no key, and the server rejects the payload it published a
 contract for. Give every nullable parameter a default, which also means putting the required
@@ -418,10 +418,10 @@ public record ListOrdersRequest(
 ### A base-record constructor argument is not immune to the wire
 
 A derived record that passes a constant to its base — `: CosmosDBDocument(SettingsID, ETag)` — looks
-like it fixes that property. It doesn't. The base's positional property has an `init` accessor and is
-not a parameter of the derived record's constructor, so System.Text.Json sets it from the incoming
-JSON _after_ construction, and the constant is overwritten by whatever the caller sent. A singleton
-document's fixed id therefore has to be enforced, not merely declared.
+like it fixes that property. It doesn't. The base's positional property has an `init` accessor and
+is not a parameter of the derived record's constructor, so System.Text.Json sets it from the
+incoming JSON _after_ construction, and the constant is overwritten by whatever the caller sent. A
+singleton document's fixed id therefore has to be enforced, not merely declared.
 
 ## Strings
 
@@ -456,8 +456,8 @@ var name = $"{typeof(EmbeddedResources).Namespace}.{folder}.{filename}";
 ### Reach for the argument-exception `ThrowIf*` helpers rather than a hand-rolled throw
 
 `ArgumentNullException`, `ArgumentException`, and `ArgumentOutOfRangeException` all carry static
-guards — `ThrowIfNegative`, `ThrowIfGreaterThan`, `ThrowIfLessThan`, `ThrowIfNullOrWhiteSpace` — that
-put the bound in the call and produce the standard message. There is no combined range helper;
+guards — `ThrowIfNegative`, `ThrowIfGreaterThan`, `ThrowIfLessThan`, `ThrowIfNullOrWhiteSpace` —
+that put the bound in the call and produce the standard message. There is no combined range helper;
 express a range as two calls.
 
 ```csharp
@@ -476,8 +476,6 @@ ArgumentOutOfRangeException.ThrowIfGreaterThan(closingDayOfWeek, (int)DayOfWeek.
 
 Avoid catching `Exception` unless rethrowing or logging. Use exceptions for exceptional conditions,
 not for control flow.
-
-### Use custom exception types for domain-specific errors
 
 ## Dependency injection
 
@@ -531,11 +529,11 @@ already says.
 
 A name inside `<c>` is a string: rename the thing and the comment silently becomes a lie. A `cref`
 is resolved by the compiler, so the same rename produces CS1574 and the comment gets fixed with the
-code. Qualify only as far as it takes to resolve — an ambiguous simple name needs the namespace,
-per the entry above.
+code. Qualify only as far as it takes to resolve — an ambiguous simple name needs the namespace, per
+the entry above.
 
-Leave `<c>` for the things the compiler cannot check: shell commands, JavaScript, platform
-constants from outside the solution, and private members of another class.
+Leave `<c>` for the things the compiler cannot check: shell commands, JavaScript, platform constants
+from outside the solution, and private members of another class.
 
 ```csharp
 // Before
