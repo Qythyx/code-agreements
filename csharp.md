@@ -16,14 +16,9 @@ Group the related model, service, and viewmodel together rather than filing each
 ### Nest a type that serves only as one interface's contract inside that interface
 
 A result or DTO used only as the input or output of a single interface belongs nested inside it —
-not in a sibling file, not at namespace scope. A type used only by one class nests privately inside
-that class the same way. It scopes the name to what it serves and keeps the folder from filling with
-one-line files.
-
-Nesting a public type _signals_ the coupling but doesn't _enforce_ it: it's still constructible as
-`IFoo.Bar`, and `internal` isn't an option when the implementation lives in a different assembly.
-Call sites reference it as `IFoo.Bar`, or alias it per file (`using Bar = …IFoo.Bar;`) where that
-reads noisily.
+not in a sibling file, not at namespace scope; a type used only by one class nests privately inside
+it the same way. Nesting _signals_ the coupling without _enforcing_ it, since `internal` isn't an
+option across assemblies. Call sites read `IFoo.Bar`, or alias it per file where that reads noisily.
 
 ```csharp
 // Before: ChargeResult.cs, CardSetupSession.cs — each a one-line sibling of IPaymentService
@@ -41,9 +36,8 @@ public interface IPaymentService
 
 A nested type is only nameable by code that can reference its container. When something in a lower
 layer needs it too, nesting forces that consumer to take a weaker type — a base type, or `object` —
-purely to dodge a reference it can't have. Move the type to the shared layer both can see, as a
-top-level type named for what it is. The nesting rule above assumes a single owner; a second one
-retires it.
+purely to dodge a reference it can't have. Move it to the shared layer both can see. The nesting
+rule above assumes a single owner; a second one retires it.
 
 ```csharp
 // Before: nested in the app-layer parser, so App.Core — which cannot reference the app — had to
@@ -123,8 +117,9 @@ public interface IAccountManager
 ### Don't alias a primary-constructor parameter with a private field
 
 A primary-constructor parameter is in scope for the whole class body, so a `private readonly` field
-initialised from it is a second name for one thing — the same objection as a property that only
-forwards. Use the parameter directly.
+initialised from it is a second name for one thing. Use the parameter directly. The field still
+earns its place when it adds something the parameter can't — a different type, a computed value, or
+an initialiser.
 
 ```csharp
 // Before
@@ -137,9 +132,6 @@ public partial class PostalCodeManager(..., IHttpClient HttpClient)
 // After
     ... await HttpClient.GetByteArrayAsync(DownloadUrl);
 ```
-
-The field is still warranted when it adds something the parameter can't: a different type, a
-computed value, or an initialiser the parameter doesn't carry.
 
 ### Use PascalCase for public members, camelCase for private fields
 
@@ -162,11 +154,9 @@ Otherwise use the explicit type.
 ### Group members with `#region` blocks, not comment banners
 
 When a class has natural clusters of members, delimit them with `#region Name` / `#endregion Name`
-rather than a `// --- Name ---` comment. Name the `#endregion` too, so the closing tag says which
-region it ends. The regions collapse in the editor; a comment banner doesn't.
-
-A region has to earn its place: a handful of adjacent one-line constants is already legible, and
-wrapping it costs two lines to save none.
+rather than a `// --- Name ---` comment — the regions collapse in the editor and a banner doesn't.
+Name the `#endregion` too. A region has to earn its place: a handful of adjacent one-line constants
+is already legible, and wrapping it costs two lines to save none.
 
 ```csharp
 // Before          // After
@@ -229,12 +219,8 @@ into `_ = await …`. Drop the result and the discard goes with it. The same rea
 
 ### Make every argument explicit at the call site
 
-Three rules, one intent — the signature should say what it takes, and the call should say what it
-passes:
-
-- Avoid named arguments unless the language requires them.
-- Avoid arguments with default values; make the caller state them.
-- Avoid nullable arguments.
+The signature should say what it takes and the call should say what it passes: avoid named arguments
+unless the language requires them, avoid defaulted arguments, and avoid nullable ones.
 
 ### Coalesce at the one call site that can pass null, rather than widening the parameter
 
@@ -271,12 +257,9 @@ Database.ExecuteStoredProcedure<Customer>(StoredProcedure.CreateOrUpdateCustomer
 ### Validate a record's positional property in the initializer, not an init accessor
 
 Redeclare the property with a validating initializer expression. A property initializer assigns the
-backing field directly and does **not** run a custom `init` accessor, so validation placed in the
-accessor is silently skipped on exactly the paths that matter — the primary constructor, and
-System.Text.Json deserialization, which constructs records through it. The accessor would only fire
-for an external `with { … }`. Because `ArgumentOutOfRangeException.ThrowIf*` returns `void`, it
-can't be the initializer expression directly; use a ternary, or a static helper the initializer
-calls.
+backing field directly and does **not** run a custom `init` accessor, so validation placed there is
+silently skipped on exactly the paths that matter — the primary constructor, and System.Text.Json
+deserialization. Since `ThrowIf*` returns `void`, use a ternary or a static helper.
 
 ```csharp
 // Runs on every path, including deserialization
@@ -295,19 +278,14 @@ public int Quantity { get; init { ArgumentOutOfRangeException.ThrowIfNegative(va
 System.Text.Json constructs records through the primary constructor and passes null for any JSON
 property that is missing or explicitly null — the non-nullable annotation does not stop it. If
 documents or payloads can omit the property, either coerce in a property initializer
-(`public string SKU { get; init; } = SKU ?? string.Empty;`) or guarantee the data is clean (a
-migration that backfills every document). Deciding which is a judgment call: the coercion was
-dropped on Beverage/Supplier because a pre-launch migration guaranteed the data instead.
+(`public string SKU { get; init; } = SKU ?? string.Empty;`) or guarantee the data is clean.
 
 ### `null!` on the way out is a lie a strict serializer catches at runtime
 
 The null-forgiving operator silences the compiler; it does not make the value non-null. Where the
 serializer respects nullable annotations it refuses to _write_ null from a non-nullable member, so
 the throw lands at send time — and if the send is wrapped in a catch that reports transport failure,
-the request never leaves and the symptom is "the network is down".
-
-Pass the empty string instead when the member genuinely has no value yet, per the
-`Prefer empty string over null for optional text` entry in `general.md`.
+the symptom is "the network is down". Pass the empty string when the member has no value yet.
 
 ```csharp
 // Before: the caller is asking who it is, so it cannot know the ID — but null cannot be serialized
@@ -321,9 +299,8 @@ new CredentialsMessage(new(email, string.Empty, clientToken))
 
 C# has no negative generic constraint — you cannot write `where T : not IFoo`. To stop a caller
 routing a marked type through the general-purpose method, add an overload taking the more-derived
-type and mark it as an error. Overload resolution prefers it whenever the argument's static type is
-the marked one, so the wrong call fails to compile. It catches the ordinary mistake, not a value
-upcast to the base interface first.
+type and mark it as an error: overload resolution prefers it whenever the argument's static type is
+the marked one. It catches the ordinary mistake, not a value upcast to the base interface first.
 
 ```csharp
 [Obsolete("Authenticated requests must go through SendAuthenticatedMessage.", error: true)]
@@ -332,16 +309,12 @@ private static Task<ServiceResult<T>> SendMessage<T>(string path, IAuthenticated
     throw new InvalidOperationException();
 ```
 
-Keep the shared implementation in a separate core method that both the guarded and the marked path
-call, rather than casting past the guard at the one legitimate call site.
-
 ### Expose a private collection as a snapshot, not as a live view of it
 
 Handing back the backing collection — or a deferred LINQ query over it, which is the same thing
-evaluated later — gives the caller a handle on your state instead of a value. They can cast an
-`IEnumerable<T>` back to `List<T>` and write to it, and a caller enumerating while you mutate gets a
-moving target or a "Collection was modified" throw. Copy before returning, inside the lock if there
-is one. A read-only return type declares the intent but doesn't enforce it; the copy is what does.
+evaluated later — gives the caller a handle on your state: they can cast `IEnumerable<T>` back to
+`List<T>` and write to it, and enumerating while you mutate throws. Copy before returning, inside
+the lock if there is one; a read-only return type declares but can't enforce.
 
 ```csharp
 // Before: deferred over the private collection, so the caller evaluates it against live state
@@ -368,10 +341,9 @@ public enum StoredProcedure
 ### Keep the discard arm on a switch expression over an enum
 
 Dropping it does _not_ buy compile-time exhaustiveness: covering every named value still leaves
-**`CS8524`** ("does not handle some values … involving an unnamed enum value"), because an enum can
-hold any underlying int. `CS8509` only fires for missing _named_ values, and you cannot get it
-without also getting `CS8524`. Keep `_ => throw new ArgumentOutOfRangeException(nameof(x))` and
-cover the forgotten-member case with a test that iterates `Enum.GetValues<T>()`.
+**`CS8524`**, because an enum can hold any underlying int. Keep
+`_ => throw new ArgumentOutOfRangeException(nameof(x))` and cover the forgotten-member case with a
+test that iterates `Enum.GetValues<T>()`.
 
 ### `ArgumentOutOfRangeException(string)` takes `paramName`, not a message
 
@@ -394,13 +366,10 @@ Enum.TryParse<T>(name, ignoreCase: true, out var value) && Enum.IsDefined(value)
 
 ### A nullable wire member is optional only once it also carries a default
 
-Under `RespectRequiredConstructorParameters`, a constructor parameter is optional exactly when it
-has a default value — nullability has nothing to do with it. That matters because the codegen on the
-other side usually reads optionality off the nullability alone: TypeGen exports `DateTime? From` as
-`From?`, the client legitimately sends no key, and the server rejects the payload it published a
-contract for. Give every nullable parameter a default, which also means putting the required
-parameters first. Audit this with a test over every wire type rather than a grep, which misses
-multi-line record declarations.
+Under `RespectRequiredConstructorParameters`, a parameter is optional exactly when it has a default
+value — nullability has nothing to do with it. The codegen on the other side reads optionality off
+the nullability alone, so the client legitimately sends no key and the server rejects the payload it
+published a contract for. Give every nullable parameter a default, required parameters first.
 
 ```csharp
 // Before: TypeScript says all four are optional; the server demands all four
@@ -418,10 +387,9 @@ public record ListOrdersRequest(
 ### A base-record constructor argument is not immune to the wire
 
 A derived record that passes a constant to its base — `: CosmosDBDocument(SettingsID, ETag)` — looks
-like it fixes that property. It doesn't. The base's positional property has an `init` accessor and
-is not a parameter of the derived record's constructor, so System.Text.Json sets it from the
-incoming JSON _after_ construction, and the constant is overwritten by whatever the caller sent. A
-singleton document's fixed id therefore has to be enforced, not merely declared.
+like it fixes that property. It doesn't: the base's positional property has an `init` accessor and
+isn't a parameter of the derived constructor, so System.Text.Json sets it from the incoming JSON
+_after_ construction. A singleton document's fixed id has to be enforced, not merely declared.
 
 ## Strings
 
@@ -498,10 +466,9 @@ Return `Task` or `Task<T>`; don't block on async code.
 ### Keep all of a production class's tests in one file, grouped by nested fixtures
 
 All tests for one production class belong in that class's single test file (`FooTest.cs` for `Foo`).
-Group themed subsets as nested `sealed` fixtures extending the test base — not satellite files
-(`FooProcessOrderTest.cs`), and not `#region`s. Nested fixtures are real structure where regions are
-purely editorial: each group's helpers and constants stay scoped to it, the runner displays
-`FooTest+ProcessOrder`, and one group can be run alone via a filter.
+Group themed subsets as nested `sealed` fixtures extending the test base — not satellite files, and
+not `#region`s. Nested fixtures are real structure: each group's helpers stay scoped to it, the
+runner displays `FooTest+ProcessOrder`, and one group can be run alone via a filter.
 
 ```csharp
 // Before: AdministrationManagerProcessOrderTest.cs, AdministrationManagerListOrdersTest.cs, …
@@ -529,11 +496,8 @@ already says.
 
 A name inside `<c>` is a string: rename the thing and the comment silently becomes a lie. A `cref`
 is resolved by the compiler, so the same rename produces CS1574 and the comment gets fixed with the
-code. Qualify only as far as it takes to resolve — an ambiguous simple name needs the namespace, per
-the entry above.
-
-Leave `<c>` for the things the compiler cannot check: shell commands, JavaScript, platform constants
-from outside the solution, and private members of another class.
+code. Leave `<c>` for what the compiler cannot check — shell commands, JavaScript, platform
+constants from outside the solution, and private members of another class.
 
 ```csharp
 // Before
