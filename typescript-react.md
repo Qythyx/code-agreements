@@ -40,13 +40,6 @@ empty→undefined mapping on top (nullable wire fields) keep their explicit hand
 
 Controls should grow and shrink to fit the available space and their content.
 
-### Restoring a scroll or pan/zoom position across a data change needs an identical layout, or an anchor
-
-Reapplying the same offset only shows the same content if the DOM lays out identically. When the data
-varies — different-sized rows, an optional panel, a wider selected item — the same transform lands
-somewhere else. Make the varying pieces a uniform size, or pin to a specific element's on-screen
-position, instead of trusting the raw offset.
-
 ## Accessibility
 
 ### Make interactive elements accessible
@@ -58,17 +51,17 @@ click handler — not just the mouse path.
 
 ### Extend a tuple-returning hook by appending, never by repurposing a position
 
-A tuple's positions are its contract, and reordering one while the types stay the same is invisible to
-both the compiler and the reader — every existing destructure silently starts meaning something else.
-Append the new element even when another order reads better in isolation.
+A tuple's positions are its contract, and reordering one while the types stay the same is invisible
+to both the compiler and the reader — every existing destructure silently starts meaning something
+else. Append the new element even when another order reads better in isolation.
 
 ```ts
 // useUrlState returns [value, setValue]. The debounced variant appends, so an existing
 // `const [searchTerm, setSearchTerm] = useUrlState(...)` keeps meaning what it meant.
 const [searchTerm, setSearchTerm, debouncedSearchTerm] = useDebouncedUrlState(
-  "search",
-  "",
-  SearchDebounceMs,
+	'search',
+	'',
+	SearchDebounceMs,
 );
 
 // Leading with the debounced value would compile everywhere and silently make every
@@ -80,19 +73,19 @@ const [searchTerm, setSearchTerm, debouncedSearchTerm] = useDebouncedUrlState(
 ### Assert the arguments a test cares about and match the rest
 
 `toHaveBeenCalledWith` compares the whole argument list, so an assertion that spells out every
-parameter fails the moment one is added — in a file that otherwise has nothing to do with the change.
-Pin the arguments under test and let a matcher absorb the others.
+parameter fails the moment one is added — in a file that otherwise has nothing to do with the
+change. Pin the arguments under test and let a matcher absorb the others.
 
 ```ts
 // Adding an AbortSignal parameter broke this assertion in a test about role filtering
 expect(service.GetUsers).toHaveBeenCalledWith(
-  expect.objectContaining({ RoleFilter: UserRole.Pending }),
+	expect.objectContaining({ RoleFilter: UserRole.Pending }),
 );
 
 // After
 expect(service.GetUsers).toHaveBeenCalledWith(
-  expect.objectContaining({ RoleFilter: UserRole.Pending }),
-  expect.anything(),
+	expect.objectContaining({ RoleFilter: UserRole.Pending }),
+	expect.anything(),
 );
 ```
 
@@ -104,7 +97,7 @@ Run `tsc --noEmit` (or the production build) before believing a refactor landed.
 
 ### Verify pointer interactions with real pointer events, not `element.click()`
 
-A synthetic `element.click()` skips the pointerdown/move/up sequence, so it sails past the machinery a
-real click goes through — pointer capture, hit-testing, drag-vs-click discrimination — and can pass
-while the real interaction is broken. Drive the check through real events: a Playwright locator
+A synthetic `element.click()` skips the pointerdown/move/up sequence, so it sails past the machinery
+a real click goes through — pointer capture, hit-testing, drag-vs-click discrimination — and can
+pass while the real interaction is broken. Drive the check through real events: a Playwright locator
 click, or dispatched `PointerEvent`s.

@@ -220,13 +220,15 @@ into `_ = await …`. Drop the result and the discard goes with it. The same rea
 ### Make every argument explicit at the call site
 
 The signature should say what it takes and the call should say what it passes: avoid named arguments
-unless the language requires them, avoid defaulted arguments, and avoid nullable ones.
+unless the language requires them, and avoid defaulted arguments.
 
 ### Coalesce at the one call site that can pass null, rather than widening the parameter
 
 A nullable parameter announces that _every_ caller may pass null, so the function and each future
 call site inherit the question. When only one call site actually has a null to hand, absorb it there
-and keep the signature honest.
+and keep the signature honest. The exception is where null is the callee's own contract — "leave
+this field unchanged" — and every caller uses it that way; then nullable is the honest signature and
+the doc comment says what null means.
 
 ```csharp
 // Before: one iOS caller could pass null, so the parameter took it on behalf of all six call sites
@@ -323,6 +325,23 @@ return Task.FromResult(sorted.AsEnumerable());
 // After. The .AsEnumerable() is load-bearing, not redundant: Task<T> is not covariant, so
 // Task<T[]> will not convert to Task<IEnumerable<T>>. Don't tidy it away.
 return Task.FromResult(sorted.ToArray().AsEnumerable());
+```
+
+### Carry a failure result whole; don't rebuild it from the properties you happen to remember
+
+Constructing a fresh result from an old one's status resets every `init` property the old one
+carried, silently and with no warning, so a reason or flag a caller keys on is lost one layer below
+the code that reads it. Give the type a constructor that delegates to the record's synthesized copy
+constructor: the whole failure travels, and so does the next property added to it.
+
+```csharp
+// Before: RejectionReason and IsTransportError are reset to their defaults
+return new(inner.Status);
+
+// After, on the result type — base(failure) reaches the copy constructor
+public ServiceResult(ServiceResult failure)
+    : base(failure) => Document = default!;
+return new(inner);
 ```
 
 ## Enums and switch expressions
@@ -449,7 +468,10 @@ not for control flow.
 
 ### Use constructor injection, not a service locator
 
-Favour interfaces and abstractions at the boundaries so the thing can be tested.
+Favour an interface at a boundary something is actually substituted across — typically a lower layer
+depending on an implementation an outer layer supplies, which is also what makes it testable. One
+implementation with one caller in the same layer is not that boundary: make it concrete and skip the
+interface, rather than adding one because the type sits in a `Services` folder.
 
 ## Async
 

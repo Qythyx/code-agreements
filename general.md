@@ -150,9 +150,11 @@ PrimeNotificationBannerReference()     ->  CaptureEmptyBannerRegion()   // the w
 enum ServiceErrorCode { Unknown }      ->  ServiceRejectionReason { NotApplicable }
                                        //   rename the enum until one honest name covers the default
 List<PostalCodeEntry> TownOptions      ->  Matches            // the elements, not the field rendered
-UntappdDetails(int BeverageID)         ->  (int UntappdBeverageID)      // whose id, and what it points at
 enum ReadOutcome { LinkDropped }       ->  { TokenRejected }  // what happened, not the reaction
 PublicSettings Settings                ->  ServiceSettings    // its role, not the type it carries
+AcsEmailService                        ->  AzureCommunicationEmailSender
+                                       //   *Service beside IEmailService/EmailService read as a
+                                       //   third implementation; it is the sender one of them wraps
 useDebounce / useDebouncedValue        ->  useDebouncedState / useDebouncedValue   // both carry the axis
 ```
 
@@ -302,6 +304,11 @@ on their machine first. A separate "run this before pushing" script relies on me
 thing that just failed. Prefer attaching it to an existing verb over inventing a new one, and leave
 the fast iteration paths unattached so the inner loop stays quick.
 
+The rule needs a verb that already exists and silently omits the check — lint riding along with
+test. It does not apply when the CI step _is_ the natural action: compiling a template is how you
+verify a change to it at all, so wrapping the compiler in a script adds a verb without adding a
+check, and whoever skips it is whoever didn't compile.
+
 ```jsonc
 // `pnpm test` now enforces exactly what CI enforces; test:watch deliberately doesn't,
 // so a red lint can't block iterating on a failing test.
@@ -336,6 +343,21 @@ foreach (var procedure in Enum.GetValues<StoredProcedure>())
 
 A public method taking arbitrary strings is a door anyone can walk through with anything. Take a
 value from a known set instead, and make the string-taking version private.
+
+### Pass values that are only meaningful together as one type
+
+Adjacent parameters that have to agree can be passed apart, and a call site that gets one right and
+the other wrong still compiles. Give them one type and the pairing stops being something each caller
+has to remember. The type is also where the "why" lives, so nesting the part inside the whole keeps
+it from drifting off on its own.
+
+```csharp
+// Before: nothing stops a caller sending the HTML without the images its cid: references resolve against
+SendEmailAsync(to, name, subject, null, html, inlineImages)
+
+// After
+SendEmailAsync(to, name, subject, null, new EmailBody(html, inlineImages))
+```
 
 ### Put mapping and canonicalization in the type that owns the value, not in a helper at call sites
 
@@ -387,16 +409,14 @@ inconsistent, not careful. Consistency with the surrounding code is itself an ar
 
 ### Prefer removing a hazard to documenting it
 
-When a trap exists only because something is inconsistent, fix the inconsistency instead of writing
-the warning. A documented hazard still catches people, and the document rots independently of the
-thing it describes.
+When a trap exists only because something is inconsistent, or because a tool explains itself badly,
+fix that rather than writing the warning — a documented hazard still catches people, and the
+document rots independently of the thing it describes. So a runbook says to run the tool and follow
+its prompts; if the prompts mislead, the prompts are what to change.
 
-```
-Four test projects, three AssemblyName patterns, two resolving differently in Debug and Release.
-
-Documenting it:  "watch out — the assembly name changes per configuration"
-Removing it:     delete the overrides; all four resolve to the project name
-```
+A prerequisite someone has to remember before each run is the same trade wearing a different hat —
+the cost moved onto the operator instead of the reader, and forgotten just as reliably. The tool
+takes it on.
 
 ### Prefer one general rule over several specific ones
 
@@ -452,25 +472,37 @@ var showGlobalRating = setting.HasFlag(GlobalRating) || (untappd?.PersonalRating
 untappd is not null && showGlobalRating ? RenderStarRating(..., untappd.GlobalRating, ...) : null
 ```
 
-### Don't hand-roll a guarantee the platform already makes
+### Don't hand-roll what the platform already ships
 
 Check the platform's documented behaviour before building mutual exclusion, retry, overlap
 detection, or a pre-check for a condition the write itself would report. The hand-rolled version is
 usually _worse_: the platform's is a lease that expires, while a flag in your own store is a poison
 pill — a run killed mid-flight leaves it set and silently blocks every later run.
 
-```
-Azure Functions timer triggers, verbatim: "only a single instance of a timer-triggered function is
-run across all instances. It will not trigger again if there is an outstanding invocation still
-running." Overlap detection in the manager would have duplicated that with a worse mechanism.
-```
+This covers whole features, not only guarantees. A cost chart rebuilt on the raw billing API loses
+the drill-down, formatting and forecasting the vendor's own view has, and inherits a rate limit the
+view does not — so the reimplementation is worse on every axis except being in one's own page. Link
+to the shipped one and spend the effort on what it cannot show.
 
-### Remove a limit whose value is a guess, when exceeding it fails loudly and capping it fails silently
+Azure Functions timer triggers are documented never to run concurrently across instances; overlap
+detection in the manager duplicated that with a worse mechanism.
 
-A guessed cap cannot prevent the failure it was added for: too high it never binds, too low it
-throttles throughput with no signal. Prefer the loud failure over a silent ceiling nobody revisits,
-once partial progress is durable and the next run resumes where this one stopped. Where overrunning
-isn't safe, measure the real constraint instead of guessing again.
+### Don't add a limit whose value is a guess
+
+A cap you can't derive from something real never binds when it's too high and silently rejects
+legitimate input when it's too low — and it reads as authoritative either way. Derive it: from what
+the client already enforces, from what real data measures, from what another path already bounds.
+Where nothing derives it, prefer the loud failure to a silent ceiling nobody revisits.
+
+```csharp
+// Before: a ceiling on a page, when the same listing can already be asked for in full
+public const int MaximumPageSize = 500;
+// Before: padding rather than measurement
+public const int MaximumNameLength = 200;
+
+// After: no ceiling on the page at all, and a name sized to names
+public const int MaximumNameLength = 50;
+```
 
 ## Validation
 
@@ -541,7 +573,10 @@ cause in the message.
 When the input a check needs is unavailable — a permission not granted, a binary absent from the
 platform, a fetch that returned null — reporting "nothing wrong" makes an unrun check
 indistinguishable from a clean one, and the run goes green having verified nothing. Give the
-unavailable case an outcome of its own, and let the strict or CI path treat it as failing.
+unavailable case an outcome of its own, and let the strict or CI path treat it as failing. This
+holds just as much when the check can still cover _part_ of its subject: quietly narrowing to what
+it can reach reports health it never measured, and the parts that did pass hide the parts that were
+dropped. Fail rather than shrink.
 
 ```ts
 // Before: a failed read makes every comparison it feeds pass silently
@@ -606,7 +641,8 @@ _ = await Task.WhenAny(allInFlight.Task, Task.Delay(TimeSpan.FromSeconds(2)));
 When a second test exists only to pin one additional behavior (an error propagates, a status passes
 through), match the collaborator loosely and assert just that. Duplicating another test's
 exact-match setup adds a copy that must be edited in lockstep while verifying nothing the first
-already covers — and if the marginal assertion is default behavior, don't keep it at all.
+already covers — and if the marginal assertion is default behavior, or another check in the file
+already fails on the same regression, don't keep it at all.
 
 ### A structural check over a snapshot suite says nothing about its contents
 
@@ -629,19 +665,17 @@ community experience to draw on.
 A test that cannot fail is not protection. Deliberately break the thing it guards and confirm it
 goes red before claiming it works.
 
-### Run a format parser over the real corpus, not just hand-written fixtures
-
-Fixtures encode the cases you already thought of, so they confirm the parser rather than test it.
-The real file carries the distribution — the placeholder rows, the near-duplicates, the records that
-break an assumption you didn't know you'd made — and finding those costs one throwaway run. Turn
-what it finds into fixtures, so the regression is pinned without the corpus.
-
 ### A tool accepting a flag is not evidence that the flag does anything
 
 Many tools ignore unrecognised options rather than rejecting them, so a clean exit says only that
 nothing crashed. Confirm the option exists in the documentation, or run the control: pass a
 deliberately nonsensical name and see whether the tool objects. If it doesn't, acceptance proved
 nothing and the flag has to be verified by its effect instead.
+
+A plan or dry-run is the same trap through a different door: it is a weaker gate than the write, not
+a rehearsal of it. `az deployment what-if` plans a clean `Create` for a resource whose name the
+provider then rejects outright. Sequence anything destructive after the real write, never after the
+preview.
 
 ```
 $ pnpm install --config.thisIsNotARealSetting=false --frozen-lockfile
