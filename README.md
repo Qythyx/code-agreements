@@ -2,64 +2,70 @@
 
 How I want code written, across all of my projects.
 
-## What this is
-
-These files are read before writing code, so that guidance given once doesn't have to be given
-again. Some of it was set down up front; most of it accumulates as things get settled during
-development sessions — usually when I correct, simplify, or rename something.
-
-Each entry records what was actually settled, with the reasoning attached, so a future session can
-read it and skip the argument. It is not a style guide written from first principles.
-
 ## What to read
 
-Always read `general.md`. It applies to every language, and it holds the design, comment, and process
-guidance that is easiest to assume you already know.
+Always read `general.md`. Then read the file for **every** language the change touches. A change
+spanning a C# backend and a TypeScript front end needs `csharp.md` and `typescript-react.md` both.
 
-Then read the file for **every** language the change touches — plural, not one. A change spanning a
-C# backend and a TypeScript front end needs `csharp.md` and `typescript-react.md` both.
+| File                  | Holds                                                    |
+| --------------------- | -------------------------------------------------------- |
+| `general.md`          | Language-agnostic design and process guidance            |
+| `csharp.md`           | C# / .NET                                                |
+| `typescript-react.md` | TypeScript, React, and the web front end                 |
+| `observations.md`     | The skill's log of corrections. Don't read before coding |
 
-## Layout
+Where a project's own CLAUDE.md says something different, the project wins.
 
-| File                  | Holds                                         |
-| --------------------- | --------------------------------------------- |
-| `general.md`          | Language-agnostic design and process guidance |
-| `csharp.md`           | C# / .NET                                     |
-| `typescript-react.md` | TypeScript, React, and the web front end      |
+## How a rule gets here
 
-Route an entry by where it **applies**, not where it came up: a design principle that surfaced in C#
+A rule is added or changed only after I have approved its wording.
+
+The `code-agreements` skill (`~/.claude/skills/code-agreements/SKILL.md`) logs my corrections to
+`observations.md` without asking. When it is run explicitly — by name, from `session-summary`, or
+from `/ship` — it reviews every open observation and proposes a rule only when the same kind of
+correction has happened twice in different code, or when I state a standing preference ("always",
+"never"). Each proposal shows the whole entry as it would appear. Editing these files by hand is
+fine too; it's a normal repo.
+
+The skill also audits the rules themselves when I ask, and offers to when a file nears its line
+budget or the last audit is more than six months old.
+
+Last audit: 2026-09-21
+
+## What belongs here
+
+A rule is a decision that comes up routinely, in any project, and that a competent developer
+wouldn't make my way without being told.
+
+These don't belong:
+
+- **How Claude should work** — when to ask, what to verify, what goes in a commit message. That goes
+  in `~/.claude/CLAUDE.md`.
+- **One project's mechanics or conventions** — how its build is wired, how its serializer is
+  configured, its naming scheme. That goes in the project's own CLAUDE.md.
+- **Something found out while debugging.** The docs, the compiler, or the failure itself will teach
+  it again.
+- **Anything the compiler, analyzer, or linter already reports.** A rule adds nothing to a warning.
+- **A special case of a rule already here.** Reword the general rule instead.
+
+## Format
+
+`## Topic` sections, one `### Heading` per rule.
+
+- The heading is an instruction someone could follow without reading further. A default with
+  exceptions starts with "Prefer", and the body says when the exception applies.
+- The body is at most three plain sentences.
+- Each sentence starts with the verb and tells the reader what to do, with the condition after it:
+  "Inline a helper when it is only used once", not "A helper with a single use goes inline". Write
+  full sentences, not fragments.
+- The rule names a concrete action: "Put a feature's model and service in one folder", not "Group
+  the related model and service together".
+- A `When:` line appears only if it isn't obvious when the rule applies.
+- An example appears only if the rule is ambiguous without one.
+
+Route a rule by where it **applies**, not where it came up: a design principle that surfaced in C#
 still belongs in `general.md`.
 
-## The bar for a new entry
-
-These files are read in full before every coding task, so each rule taxes every future session
-whether or not it applies. A new entry has to be **unguessable** (a competent implementer wouldn't
-arrive at it unaided) and **recurrent** (it fires often, not just conceivably). Most candidates fail
-one or the other. One entry is a normal yield from a session; five means a session's narrative is
-being converted into rule-shaped prose.
-
-The entries that earn their keep are mostly preferences — arbitrary, unguessable, two lines. Things
-I _discovered_ while debugging generally don't: a future session reads it in the docs, or the
-compiler says so, or the failure teaches it again in ten minutes.
-
-## What doesn't belong here
-
-- **Agent-behavior guidance** — how Claude should work, when to ask before editing, what to put in a
-  commit message. That goes in `~/.claude/CLAUDE.md`. These files are about the code.
-- **Facts about a particular session** — "the sproc wasn't registered in staging" is history. That
-  belongs in the project's session summary.
-- **War stories** — a rule whose first clause names a _situation_ ("A migration must not…", "Set
-  every response header…") rather than a decision routinely faced. The wording generalizes; the
-  trigger doesn't.
-- **Special cases of a rule already here** — sharpen the general one instead of adding a second
-  entry beside it.
-
-## Maintenance
-
-Maintained by the `code-agreements` skill (`~/.claude/skills/code-agreements/SKILL.md`), which adds
-entries as guidance settles during a session and reconciles them at the end. Every run also prunes —
-these files should get sharper over time, not longer. Editing by hand is fine; it's a normal repo.
-
-Format: `## Topic` sections, `### The rule as a sentence` per entry, two to four lines of reasoning
-below it, and at most one short code example where it clarifies. If an entry won't fit that, it's
-carrying a situation with it and probably shouldn't be here. Formatted with `npx prettier --write .`.
+Line budgets: `general.md` 300, `csharp.md` 200, `typescript-react.md` 100. Going over means cutting
+something. If you feel nothing should be cut then discuss it with the user. Formatted with
+`npx prettier --write .`.
