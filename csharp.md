@@ -110,10 +110,11 @@ implementation that an outer layer supplies.
 Split a test whose name contains "And" into two. Use an `AssertionScope` only when one claim needs
 several assertions.
 
-### Keep all tests for a production class in one file
+### Keep all tests for a production class in one test class
 
-Name it `FooTest.cs` for `Foo`. Group themed subsets as nested `sealed` classes extending the test
-base, not as extra files or `#region`s.
+Name it `FooTest` in `FooTest.cs` for `Foo`. Group themed subsets as nested `sealed` classes that
+extend the project's shared test base, never the outer test class. Don't split them into extra
+classes, extra files or `#region`s.
 
 ## Documentation
 
@@ -125,10 +126,11 @@ signature.
 
 ### Start a doc summary with a verb that says what the member is for
 
-Write "Checks that…" or "Fetches…", not "Throws unless…" or "Returns…". Use only nouns that appear
-in the signature, or in the project's glossary if it has one. Leave out a caller's reasons, the
-history, and how the member works inside; put specifics in the `<param>` and `<returns>` tags. Split
-the method when its summary can't be written plainly.
+Write "Checks that…" or "Fetches…", not "Throws unless…" or "Returns…". Use plain, everyday
+words and the nouns in the signature. When the summary names a product concept, use the
+glossary's word for it. Describe the member alone in every tag — summary, `<param>`,
+`<returns>`, `<exception>` — and leave out the caller, its reasons, the history, and how the
+member works inside. Split the method when its summary can't be written plainly.
 
 ### Name code in a doc comment with `<see cref>`, not `<c>`
 

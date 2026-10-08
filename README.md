@@ -22,9 +22,9 @@ A rule is added or changed only after I have approved its wording.
 
 The `code-agreements` skill (`~/.claude/skills/code-agreements/SKILL.md`) logs my corrections to
 `observations.md` without asking. When it is run explicitly — by name, from `session-summary`, or
-from `/ship` — it reviews every open observation and proposes a rule only when the same kind of
-correction has happened twice in different code, or when I state a standing preference ("always",
-"never"). Each proposal shows the whole entry as it would appear. Editing these files by hand is
+from `/ship` — it reviews the observations that session logged, together with the related open ones
+from earlier sessions, and proposes a rule only when the same kind of correction has happened twice
+in different code, or when I state a standing preference ("always", "never"). Each proposal shows the whole entry as it would appear. Editing these files by hand is
 fine too; it's a normal repo.
 
 The skill also audits the rules themselves when I ask, and offers to when a file nears its line

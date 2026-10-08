@@ -22,10 +22,11 @@ MarkAccountForDeletion(id) + ClearAccountDeletionMark(id)  ->  SetAccountDeletio
 
 ### Prefer inlining anything that is used only once
 
-Inline a variable, helper, property, class, or UI component when it is only used once. Keep it
-separate only when doing so makes the code easier to read; either having the separate name provides
-clarity, or the inlined code is long enough that it would be disruptive inlined. Don't add a
-property or method whose only job is to call another member; call that member directly.
+Inline a variable, function, method, type, file, or UI component when production code uses it in
+one place, whatever its visibility; don't count a test as a second use. Count the uses again when a
+change removes a caller, and inline what is left with one. Keep it separate only when its name tells
+the reader something the code doesn't or its body is long enough to interrupt the caller, and never
+keep a property or method whose only job is to call another member.
 
 ### Reuse common UX components rather than styling each page
 
@@ -42,18 +43,27 @@ set once at mount, or derived from props or other state.
 Reload instead of patching the saved row into local state when the server derives totals, counts, or
 rollups. Patching leaves those derived values stale, so the row and its summary disagree on screen.
 
+### Prefer one entry per item over parallel lists keyed the same way
+
+Combine an item's attributes into one entry when readers use them together, so adding or changing
+an item touches one place. Keep them in separate lists when a combined entry would be harder to
+read than the lists it replaces. Judge by what a reader has to hold in mind, not by how many
+declarations there are.
+
 ## Naming
 
-### Name a thing for what it is, not for what one caller does with it
+### Name a thing for what it is, not for the circumstances around it
 
 Name what the thing is, does, returns, or identifies. Don't take the name from one caller's use,
-because it stops being true when a second caller arrives. Name a delegate parameter for what it
-does: `JsonProvider`, not `Json`.
+from the screen it was called from, from when it runs, or from how it looks today, because none of
+those stay true. Name a delegate parameter for what it does: `JsonProvider`, not `Json`.
 
 ```text
 VerifyCredentials             ->  ResolveAccountID   // it returns an ID; it doesn't throw
 enum ReadOutcome.LinkDropped  ->  TokenRejected      // what happened, not the caller's reaction
 PublicSettings Settings       ->  ServiceSettings    // its role, not its type
+hourly run                    ->  closing check job  // what it does, not its schedule
+RatingPaw                     ->  RatingImage        // its role, not the artwork it shows today
 ```
 
 ### Choose a method's verb to say what the method actually does
@@ -63,9 +73,10 @@ when it doesn't search, or "Process" or "Run" when a specific verb exists.
 
 ### Use words the reader already knows
 
-Do this in names, comments, and docs. Don't invent a term ("closing pass", "slot") — say what the
-thing does, even if that is longer. Qualify a word that has multiple potential meanings: "layout
-breakpoint", not "breakpoint".
+Do this in names, comments, docs, and in text users see, using their terms rather than internal
+ones. Say what a thing does instead of inventing a term for it, even if that is longer. Qualify a
+word that has several meanings ("layout breakpoint"), and give a relative word its reference point
+("in the past", not "behind").
 
 ### Follow the naming conventions already established in the project
 
@@ -96,6 +107,11 @@ system.
 
 Use Mermaid because it renders on GitHub and survives edits. Keep directory and namespace trees as
 text.
+
+### Link to the code that defines a value instead of repeating the value in a doc
+
+Name the constant or setting and link its file when a Markdown doc needs a value, a limit, or a list
+that the code defines. Keep the reason for the value in the code beside the definition.
 
 ## Warnings
 
